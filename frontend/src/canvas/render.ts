@@ -1,9 +1,11 @@
 import type { Editor } from '../editor/Editor';
 import { elementBounds, intersects, pathPoints, resolveArrow } from '../model/geometry';
-import type { ArrowElement, BoardElement, Point, ShapeElement } from '../model/types';
+import type { ArrowElement, Bounds, Point, ShapeElement, ShapeKind } from '../model/types';
 import { isArrow } from '../model/types';
-import { screenToWorld } from './camera';
+import type { Peer } from '../collab/presence';
+import { screenToWorld, worldToScreen } from './camera';
 import { drawGrid } from './grid';
+import { FONT_SIZE, LINE_HEIGHT, TEXT_PADDING, wrapText } from './textLayout';
 
 export interface Theme {
   background: string;
@@ -12,6 +14,8 @@ export interface Theme {
   handleFill: string;
   marqueeFill: string;
   ink: string;
+  /** Семейство шрифта интерфейса: холст должен писать тем же шрифтом, что и разметка. */
+  fontFamily: string;
 }
 
 export function readTheme(el: Element): Theme {
@@ -24,41 +28,21 @@ export function readTheme(el: Element): Theme {
     handleFill: v('--bg-panel'),
     marqueeFill: v('--selection-fill'),
     ink: v('--text'),
+    fontFamily: style.fontFamily,
   };
 }
 
-const FONT_SIZE = 16;
-const LINE_HEIGHT = 20;
-const TEXT_PADDING = 8;
+type OutlineKind = Exclude<ShapeKind, 'path'>;
+
 const ARROW_HEAD = 12;
 const HANDLE_PX = 8;
+const CORNER_RADIUS = 8;
+const PEER_LABEL_FONT_SIZE = 12;
 
-export function wrapText(
-  measure: (text: string) => number,
-  text: string,
-  maxWidth: number,
-): string[] {
-  const lines: string[] = [];
-  for (const paragraph of text.split('\n')) {
-    let line = '';
-    for (const word of paragraph.split(' ')) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (line && measure(candidate) > maxWidth) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = candidate;
-      }
-    }
-    lines.push(line);
-  }
-  return lines;
-}
-
-function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
-  const { x, y, w, h } = el;
-  ctx.beginPath();
-  switch (el.kind) {
+/** Контур замкнутой фигуры в рамке bounds. Добавляется к текущему пути холста. */
+function outline(ctx: CanvasRenderingContext2D, kind: OutlineKind, bounds: Bounds): void {
+  const { x, y, w, h } = bounds;
+  switch (kind) {
     case 'ellipse':
       ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
       break;
@@ -70,24 +54,33 @@ function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
       ctx.closePath();
       break;
     case 'rectangle':
-      ctx.roundRect(x, y, w, h, Math.min(8, w / 4, h / 4));
+      ctx.roundRect(x, y, w, h, Math.min(CORNER_RADIUS, w / 4, h / 4));
       break;
     case 'text':
       ctx.rect(x, y, w, h);
       break;
-    case 'path':
-      polyline(ctx, pathPoints(el));
-      break;
   }
 }
 
-function polyline(ctx: CanvasRenderingContext2D, points: Point[]): void {
-  if (points.length === 0) return;
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
+  ctx.beginPath();
+  if (el.kind === 'path') polyline(ctx, pathPoints(el));
+  else outline(ctx, el.kind, el);
 }
 
-function drawShape(ctx: CanvasRenderingContext2D, el: ShapeElement, editing: boolean): void {
+function polyline(ctx: CanvasRenderingContext2D, points: readonly Point[]): void {
+  const [first, ...rest] = points;
+  if (!first) return;
+  ctx.moveTo(first.x, first.y);
+  for (const p of rest) ctx.lineTo(p.x, p.y);
+}
+
+function drawShape(
+  ctx: CanvasRenderingContext2D,
+  el: ShapeElement,
+  editing: boolean,
+  theme: Theme,
+): void {
   shapePath(ctx, el);
   if (el.kind === 'path') {
     ctx.strokeStyle = el.stroke;
@@ -106,12 +99,14 @@ function drawShape(ctx: CanvasRenderingContext2D, el: ShapeElement, editing: boo
   }
   if (editing || !el.text) return;
   ctx.fillStyle = el.stroke;
-  ctx.font = `${FONT_SIZE}px ${getComputedStyle(document.body).fontFamily}`;
+  ctx.font = `${FONT_SIZE}px ${theme.fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const lines = wrapText((t) => ctx.measureText(t).width, el.text, el.w - TEXT_PADDING * 2);
   const top = el.y + el.h / 2 - ((lines.length - 1) * LINE_HEIGHT) / 2;
-  lines.forEach((line, i) => ctx.fillText(line, el.x + el.w / 2, top + i * LINE_HEIGHT));
+  lines.forEach((line, i) => {
+    ctx.fillText(line, el.x + el.w / 2, top + i * LINE_HEIGHT);
+  });
 }
 
 function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement, editor: Editor): void {
@@ -122,7 +117,10 @@ function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement, editor: Edit
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(start.x, start.y);
-  ctx.lineTo(end.x - Math.cos(angle) * ARROW_HEAD * 0.8, end.y - Math.sin(angle) * ARROW_HEAD * 0.8);
+  ctx.lineTo(
+    end.x - Math.cos(angle) * ARROW_HEAD * 0.8,
+    end.y - Math.sin(angle) * ARROW_HEAD * 0.8,
+  );
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(end.x, end.y);
@@ -177,16 +175,66 @@ function drawStroke(ctx: CanvasRenderingContext2D, editor: Editor, theme: Theme)
   ctx.strokeStyle = theme.ink;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  if (preview && preview.kind === 'line') {
+  if (preview?.kind === 'line') {
     polyline(ctx, [preview.start, preview.end]);
   } else if (preview && preview.kind !== 'none') {
-    shapePath(ctx, { ...preview.bounds, kind: preview.kind } as ShapeElement);
+    outline(ctx, preview.kind, preview.bounds);
   } else if (editor.stroke) {
     polyline(ctx, editor.stroke);
   } else {
     return;
   }
   ctx.stroke();
+}
+
+/** Выделения и курсоры других участников, каждый своим цветом. */
+function drawPeers(
+  ctx: CanvasRenderingContext2D,
+  editor: Editor,
+  peers: readonly Peer[],
+  dpr: number,
+  theme: Theme,
+): void {
+  const { zoom } = editor.camera;
+  const lookup = (id: string) => editor.doc.get(id);
+  for (const peer of peers) {
+    ctx.strokeStyle = peer.color;
+    ctx.lineWidth = 2 / zoom;
+    for (const id of peer.selection) {
+      const el = editor.doc.get(id);
+      if (!el) continue;
+      const b = elementBounds(el, lookup);
+      const pad = 6 / zoom;
+      ctx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2);
+    }
+  }
+
+  // Курсоры рисуются в экранных координатах, чтобы не зависеть от масштаба.
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.font = `${PEER_LABEL_FONT_SIZE}px ${theme.fontFamily}`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  for (const peer of peers) {
+    if (!peer.cursor) continue;
+    const p = worldToScreen(editor.camera, peer.cursor);
+    ctx.fillStyle = peer.color;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + 3.5, p.y + 15);
+    ctx.lineTo(p.x + 7, p.y + 9.5);
+    ctx.lineTo(p.x + 13, p.y + 9);
+    ctx.closePath();
+    ctx.fill();
+    const label = peer.name;
+    const width = ctx.measureText(label).width + 12;
+    ctx.beginPath();
+    ctx.roundRect(p.x + 12, p.y + 14, width, 20, 6);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, p.x + 18, p.y + 24);
+  }
+  ctx.restore();
 }
 
 /** Полная перерисовка кадра. Рисуются только элементы, попавшие в видимую область. */
@@ -197,6 +245,7 @@ export function renderBoard(
   height: number,
   dpr: number,
   theme: Theme,
+  peers: readonly Peer[] = [],
 ): void {
   const { camera } = editor;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -211,16 +260,21 @@ export function renderBoard(
 
   const topLeft = screenToWorld(camera, { x: 0, y: 0 });
   const bottomRight = screenToWorld(camera, { x: width, y: height });
-  const viewport = { x: topLeft.x, y: topLeft.y, w: bottomRight.x - topLeft.x, h: bottomRight.y - topLeft.y };
+  const viewport = {
+    x: topLeft.x,
+    y: topLeft.y,
+    w: bottomRight.x - topLeft.x,
+    h: bottomRight.y - topLeft.y,
+  };
   const lookup = (id: string) => editor.doc.get(id);
 
-  const elements: BoardElement[] = editor.doc.list();
-  for (const el of elements) {
+  for (const el of editor.doc.list()) {
     if (!intersects(viewport, elementBounds(el, lookup))) continue;
     if (isArrow(el)) drawArrow(ctx, el, editor);
-    else drawShape(ctx, el, el.id === editor.editingId);
+    else drawShape(ctx, el, el.id === editor.editingId, theme);
   }
 
+  drawPeers(ctx, editor, peers, dpr, theme);
   drawSelection(ctx, editor, theme);
   drawStroke(ctx, editor, theme);
 

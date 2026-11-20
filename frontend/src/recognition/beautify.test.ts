@@ -10,7 +10,7 @@ describe('beautifyBounds', () => {
   });
 
   it('takes the size of a similar neighbour and lines up with it', () => {
-    const neighbour = { kind: 'rectangle', x: 0, y: 0, w: 160, h: 80 };
+    const neighbour = { kind: 'rectangle' as const, x: 0, y: 0, w: 160, h: 80 };
     const b = beautifyBounds('rectangle', { x: 300, y: 6, w: 150, h: 86 }, [neighbour], 12);
     expect(b).toEqual({ x: 296, y: 0, w: 160, h: 80 });
   });

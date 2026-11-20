@@ -15,22 +15,23 @@ class Base(DeclarativeBase):
     pass
 
 
+# Пул соединений создаётся при первом обращении и закрывается при остановке приложения.
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
-def get_engine() -> AsyncEngine:
+def session_factory() -> async_sessionmaker[AsyncSession]:
+    """Фабрика сессий базы данных. Используется и в запросах, и в синхронизации по WebSocket."""
     global _engine, _sessionmaker
-    if _engine is None:
+    if _sessionmaker is None:
         _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
-    return _engine
+    return _sessionmaker
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    get_engine()
-    assert _sessionmaker is not None
-    async with _sessionmaker() as session:
+    """Зависимость FastAPI: сессия на время одного запроса."""
+    async with session_factory()() as session:
         yield session
 
 
