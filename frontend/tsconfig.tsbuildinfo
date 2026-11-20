@@ -1,1 +1,0 @@
-{"root":["./src/App.test.tsx","./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/canvas/Board.tsx","./src/canvas/camera.test.ts","./src/canvas/camera.ts","./src/canvas/grid.ts","./src/ui/Toolbar.tsx","./vite.config.ts"],"version":"6.0.3"}

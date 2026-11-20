@@ -25,3 +25,18 @@
   background: var(--bg-active);
   color: var(--text-on-active);
 }
+
+.divider {
+  width: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.select {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+}
