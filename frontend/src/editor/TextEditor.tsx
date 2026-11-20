@@ -8,7 +8,7 @@ import styles from './TextEditor.module.css';
 /** Поле ввода поверх фигуры, текст которой сейчас редактируется. */
 export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
   const element = editor.doc.get(id);
-  const [value, setValue] = useState(element && !isArrow(element) ? element.text : '');
+  const [value, setValue] = useState(() => editor.editingText);
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -21,7 +21,6 @@ export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
   const topLeft = worldToScreen(editor.camera, { x: element.x, y: element.y });
 
   const finish = () => {
-    editor.commitText(id, value);
     editor.stopEditing();
   };
 
@@ -45,7 +44,10 @@ export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
         ),
         color: element.stroke,
       }}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={(e) => {
+        setValue(e.target.value);
+        editor.setEditingText(e.target.value);
+      }}
       onBlur={finish}
       onKeyDown={(e) => {
         if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
