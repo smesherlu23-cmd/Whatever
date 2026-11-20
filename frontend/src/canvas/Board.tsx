@@ -1,12 +1,20 @@
 import { useEffect, useRef } from 'react';
-import { type Camera, initialCamera, panBy, zoomAt } from './camera';
-import { drawGrid } from './grid';
+import type { Editor } from '../editor/Editor';
 import styles from './Board.module.css';
+import { readTheme, renderBoard } from './render';
 
-/** Холст доски: бесконечная сетка, сдвиг и масштаб. Перерисовка через requestAnimationFrame. */
-export function Board({ onZoomChange }: { onZoomChange?: (zoom: number) => void }) {
+const CURSORS: Record<string, string> = {
+  select: 'default',
+  rectangle: 'crosshair',
+  ellipse: 'crosshair',
+  diamond: 'crosshair',
+  arrow: 'crosshair',
+  text: 'text',
+};
+
+/** Холст доски. Передаёт события в редактор и перерисовывает кадр, только когда что-то изменилось. */
+export function Board({ editor }: { editor: Editor }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cameraRef = useRef<Camera>(initialCamera);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -30,80 +38,86 @@ export function Board({ onZoomChange }: { onZoomChange?: (zoom: number) => void 
       frame = requestAnimationFrame(render);
       if (!dirty) return;
       dirty = false;
-      const dpr = window.devicePixelRatio || 1;
-      const style = getComputedStyle(canvas);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = style.getPropertyValue('--canvas-bg');
-      ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-      drawGrid(
+      canvas.style.cursor = editor.spaceHeld ? 'grab' : CURSORS[editor.tool];
+      renderBoard(
         ctx,
-        cameraRef.current,
+        editor,
         canvas.clientWidth,
         canvas.clientHeight,
-        style.getPropertyValue('--canvas-grid'),
+        window.devicePixelRatio || 1,
+        readTheme(canvas),
       );
     };
 
-    const setCamera = (camera: Camera) => {
-      cameraRef.current = camera;
-      onZoomChange?.(camera.zoom);
-      requestDraw();
+    const local = (e: { clientX: number; clientY: number }) => {
+      const rect = canvas.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      if (e.ctrlKey || e.metaKey) {
-        const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        setCamera(zoomAt(cameraRef.current, point, Math.exp(-e.deltaY * 0.01)));
-      } else {
-        setCamera(panBy(cameraRef.current, -e.deltaX, -e.deltaY));
-      }
+      editor.wheel(local(e), e.deltaX, e.deltaY, e.ctrlKey || e.metaKey);
     };
-
-    let dragging: { x: number; y: number } | null = null;
     const onPointerDown = (e: PointerEvent) => {
-      // Средняя кнопка или пробел + левая кнопка двигают холст.
-      if (e.button === 1 || (e.button === 0 && spaceHeld)) {
-        dragging = { x: e.clientX, y: e.clientY };
-        canvas.setPointerCapture(e.pointerId);
-      }
+      canvas.setPointerCapture(e.pointerId);
+      editor.pointerDown(local(e), { button: e.button, shift: e.shiftKey });
     };
     const onPointerMove = (e: PointerEvent) => {
-      if (!dragging) return;
-      setCamera(panBy(cameraRef.current, e.clientX - dragging.x, e.clientY - dragging.y));
-      dragging = { x: e.clientX, y: e.clientY };
+      // Берём все промежуточные точки, которые браузер склеил в одно событие.
+      const events = e.getCoalescedEvents?.() ?? [e];
+      for (const ev of events.length ? events : [e]) {
+        editor.pointerMove(local(ev), { shift: e.shiftKey });
+      }
     };
-    const onPointerUp = () => {
-      dragging = null;
-    };
+    const onPointerUp = () => editor.pointerUp();
+    const onDoubleClick = (e: MouseEvent) => editor.doubleClick(local(e));
 
-    let spaceHeld = false;
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space') spaceHeld = e.type === 'keydown';
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      if (e.code === 'Space') {
+        editor.spaceHeld = e.type === 'keydown';
+        requestDraw();
+        e.preventDefault();
+        return;
+      }
+      if (e.type !== 'keydown') return;
+      const handled = editor.keyDown({
+        key: e.key,
+        code: e.code,
+        ctrl: e.ctrlKey || e.metaKey,
+        shift: e.shiftKey,
+      });
+      if (handled) e.preventDefault();
     };
 
+    const unsubscribe = editor.subscribe(requestDraw);
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('dblclick', onDoubleClick);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
     frame = requestAnimationFrame(render);
 
     return () => {
       cancelAnimationFrame(frame);
+      unsubscribe();
       observer.disconnect();
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointercancel', onPointerUp);
+      canvas.removeEventListener('dblclick', onDoubleClick);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKey);
     };
-  }, [onZoomChange]);
+  }, [editor]);
 
   return <canvas ref={canvasRef} className={styles.canvas} aria-label="Холст доски" />;
 }
