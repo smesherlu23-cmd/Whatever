@@ -30,8 +30,8 @@ export function BoardView({
           <Toolbar
             tool={state.tool}
             onChange={(tool) => editor.setTool(tool)}
-            smartMode={state.smartMode}
-            onSmartModeChange={(mode) => editor.setSmartMode(mode)}
+            smartDrawing={state.smartDrawing}
+            onSmartDrawingChange={(enabled) => editor.setSmartDrawing(enabled)}
             onUndo={() => editor.undo()}
             onRedo={() => editor.redo()}
           />

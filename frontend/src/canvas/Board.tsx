@@ -3,6 +3,7 @@ import type { Presence } from '../collab/presence';
 import type { Editor, Tool } from '../editor/Editor';
 import { screenToWorld } from './camera';
 import styles from './Board.module.css';
+import { subscribeTheme } from '../ui/theme';
 import { readTheme, renderBoard } from './render';
 
 const CURSORS: Record<Tool, string> = {
@@ -110,6 +111,7 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
 
     const unsubscribe = editor.subscribe(requestDraw);
     const unsubscribePresence = presence?.subscribe(requestDraw);
+    const unsubscribeTheme = subscribeTheme(requestDraw);
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
 
@@ -134,6 +136,7 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
       observer.disconnect();
       unsubscribe();
       unsubscribePresence?.();
+      unsubscribeTheme();
     };
   }, [editor, presence]);
 

@@ -1,9 +1,9 @@
-import type { SmartMode, Tool } from '../editor/Editor';
+import type { Tool } from '../editor/Editor';
 import styles from './Toolbar.module.css';
 
 const TOOLS: readonly { id: Tool; label: string; key: string }[] = [
   { id: 'select', label: 'Выделение', key: 'V' },
-  { id: 'pen', label: 'Умное рисование', key: 'P' },
+  { id: 'pen', label: 'Рисование', key: 'P' },
   { id: 'rectangle', label: 'Прямоугольник', key: 'R' },
   { id: 'ellipse', label: 'Эллипс', key: 'O' },
   { id: 'diamond', label: 'Ромб', key: 'D' },
@@ -11,24 +11,18 @@ const TOOLS: readonly { id: Tool; label: string; key: string }[] = [
   { id: 'text', label: 'Текст', key: 'T' },
 ];
 
-const SMART_MODES: readonly { mode: SmartMode; label: string }[] = [
-  { mode: 'hold', label: 'Выравнивать при задержке' },
-  { mode: 'always', label: 'Выравнивать всегда' },
-  { mode: 'off', label: 'Не выравнивать' },
-];
-
 export function Toolbar({
   tool,
   onChange,
-  smartMode,
-  onSmartModeChange,
+  smartDrawing,
+  onSmartDrawingChange,
   onUndo,
   onRedo,
 }: {
   tool: Tool;
   onChange: (tool: Tool) => void;
-  smartMode: SmartMode;
-  onSmartModeChange: (mode: SmartMode) => void;
+  smartDrawing: boolean;
+  onSmartDrawingChange: (enabled: boolean) => void;
   onUndo: () => void;
   onRedo: () => void;
 }) {
@@ -47,21 +41,18 @@ export function Toolbar({
         </button>
       ))}
       {tool === 'pen' && (
-        <select
-          className={styles.select}
-          aria-label="Когда выравнивать набросок"
-          value={smartMode}
-          onChange={(e) => {
-            const selected = SMART_MODES.find(({ mode }) => mode === e.target.value);
-            if (selected) onSmartModeChange(selected.mode);
-          }}
+        <label
+          className={styles.switch}
+          title="Набросок от руки превращается в ровную фигуру или стрелку"
         >
-          {SMART_MODES.map(({ mode, label }) => (
-            <option key={mode} value={mode}>
-              {label}
-            </option>
-          ))}
-        </select>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={smartDrawing}
+            onChange={(e) => onSmartDrawingChange(e.target.checked)}
+          />
+          Умное рисование
+        </label>
       )}
       <span className={styles.divider} />
       <button type="button" className={styles.button} title="Отменить (Ctrl+Z)" onClick={onUndo}>

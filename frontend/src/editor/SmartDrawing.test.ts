@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Point } from '../model/types';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
-import { Editor, HOLD_MS } from './Editor';
+import { Editor } from './Editor';
 
 function circle(cx: number, cy: number, r: number): Point[] {
   const points: Point[] = [];
@@ -19,53 +19,51 @@ function line(from: Point, to: Point): Point[] {
   }));
 }
 
-function draw(editor: Editor, points: Point[], hold: boolean) {
+function draw(editor: Editor, points: Point[]) {
   const [first, ...rest] = points;
   editor.pointerDown(defined(first));
   for (const p of rest) editor.pointerMove(p);
-  if (hold) vi.advanceTimersByTime(HOLD_MS + 10);
   editor.pointerUp();
 }
 
-describe('smart drawing', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+function penEditor(smart = true): Editor {
+  const editor = new Editor();
+  editor.setTool('pen');
+  editor.setSmartDrawing(smart);
+  return editor;
+}
 
-  it('turns a held circle into a neat circle', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    draw(editor, circle(200, 200, 60), true);
+describe('smart drawing', () => {
+  it('turns a rough circle into a neat circle right away', () => {
+    const editor = penEditor();
+    draw(editor, circle(200, 200, 60));
     const shape = defined(shapes(editor.doc)[0]);
     expect(shape.kind).toBe('ellipse');
     expect(shape.w).toBe(shape.h);
     expect(editor.tool).toBe('pen');
   });
 
-  it('keeps the hand-drawn stroke when released without holding', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    draw(editor, circle(200, 200, 60), false);
+  it('keeps the hand-drawn stroke when smart drawing is off', () => {
+    const editor = penEditor(false);
+    draw(editor, circle(200, 200, 60));
     expect(editor.doc.list()[0]?.kind).toBe('path');
   });
 
-  it('recognizes every stroke in "always" mode and never in "off" mode', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    editor.setSmartMode('always');
-    draw(editor, circle(200, 200, 60), false);
-    expect(editor.doc.list()[0]?.kind).toBe('ellipse');
-
-    const plain = new Editor();
-    plain.setTool('pen');
-    plain.setSmartMode('off');
-    draw(plain, circle(200, 200, 60), true);
-    expect(plain.doc.list()[0]?.kind).toBe('path');
+  it('keeps a scribble that is not like any shape', () => {
+    const editor = penEditor();
+    draw(editor, [
+      { x: 0, y: 0 },
+      { x: 40, y: 80 },
+      { x: 80, y: 0 },
+      { x: 120, y: 80 },
+      { x: 160, y: 0 },
+    ]);
+    expect(editor.doc.list()[0]?.kind).toBe('path');
   });
 
   it('undo brings back the hand-drawn version first', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    draw(editor, circle(200, 200, 60), true);
+    const editor = penEditor();
+    draw(editor, circle(200, 200, 60));
     editor.undo();
     expect(editor.doc.list().map((el) => el.kind)).toEqual(['path']);
     editor.undo();
@@ -73,44 +71,26 @@ describe('smart drawing', () => {
   });
 
   it('turns a line between two shapes into a bound arrow', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    editor.setSmartMode('always');
-    draw(editor, circle(100, 100, 50), false);
-    draw(editor, circle(400, 100, 50), false);
+    const editor = penEditor();
+    draw(editor, circle(100, 100, 50));
+    draw(editor, circle(400, 100, 50));
     const [a, b] = takeTwo(shapes(editor.doc));
-    draw(editor, line({ x: 160, y: 102 }, { x: 340, y: 98 }), false);
+    draw(editor, line({ x: 160, y: 102 }, { x: 340, y: 98 }));
     const arrow = defined(arrows(editor.doc)[0]);
     expect(arrow.start.shapeId).toBe(a.id);
     expect(arrow.end.shapeId).toBe(b.id);
   });
 
   it('straightens a free line and aligns a new shape with its neighbour', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    editor.setSmartMode('always');
-    draw(editor, line({ x: 0, y: 300 }, { x: 200, y: 310 }), false);
+    const editor = penEditor();
+    draw(editor, line({ x: 0, y: 300 }, { x: 200, y: 310 }));
     const arrow = defined(arrows(editor.doc)[0]);
     expect(arrow.start.y).toBe(arrow.end.y);
 
-    draw(editor, circle(100, 100, 50), false);
-    draw(editor, circle(400, 106, 52), false);
+    draw(editor, circle(100, 100, 50));
+    draw(editor, circle(400, 106, 52));
     const [first, second] = takeTwo(shapes(editor.doc).filter((el) => el.kind === 'ellipse'));
     expect(second.y + second.h / 2).toBe(first.y + first.h / 2);
     expect(second.w).toBe(first.w);
-  });
-
-  it('shows the recognized shape while the pointer is held', () => {
-    const editor = new Editor();
-    editor.setTool('pen');
-    const [first, ...rest] = circle(200, 200, 60);
-    editor.pointerDown(defined(first));
-    for (const p of rest) editor.pointerMove(p);
-    expect(editor.strokePreview).toBeNull();
-    vi.advanceTimersByTime(HOLD_MS + 10);
-    expect(editor.strokePreview?.kind).toBe('ellipse');
-    editor.pointerMove({ x: 500, y: 500 });
-    expect(editor.strokePreview).toBeNull();
-    editor.pointerUp();
   });
 });

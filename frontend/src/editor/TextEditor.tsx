@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { worldToScreen } from '../canvas/camera';
 import { FONT_SIZE, LINE_HEIGHT } from '../canvas/textLayout';
-import { isArrow } from '../model/types';
+import { DEFAULT_STROKE, isArrow } from '../model/types';
 import type { Editor } from './Editor';
 import styles from './TextEditor.module.css';
 
@@ -43,7 +43,8 @@ export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
           0,
           (element.h - LINE_HEIGHT * Math.max(1, value.split('\n').length)) * zoom * 0.5,
         ),
-        color: element.stroke,
+        // Цвет по умолчанию берётся из темы, как на холсте.
+        color: element.stroke === DEFAULT_STROKE ? 'var(--shape-stroke)' : element.stroke,
       }}
       onChange={(e) => setValue(e.target.value)}
       onBlur={finish}

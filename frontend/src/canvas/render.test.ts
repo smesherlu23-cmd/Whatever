@@ -11,6 +11,8 @@ const theme: Theme = {
   handleFill: '#ffffff',
   marqueeFill: 'rgba(59,130,246,0.1)',
   ink: '#18181b',
+  shapeStroke: '#43434a',
+  shapeFill: '#ffffff',
   fontFamily: 'sans-serif',
 };
 
@@ -26,7 +28,10 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; calls: Call[] } {
         if (prop === 'measureText') return target.measureText;
         return (...args: unknown[]) => calls.push([String(prop), ...args]);
       },
-      set: () => true,
+      set(_target, prop, value) {
+        calls.push([`set ${String(prop)}`, value]);
+        return true;
+      },
     },
   ) as unknown as CanvasRenderingContext2D;
   return { ctx, calls };
@@ -51,6 +56,25 @@ function shape(id: string, x: number, y: number, extra: Partial<ShapeElement> = 
 const named = (calls: Call[], method: string) => calls.filter(([name]) => name === method);
 
 describe('renderBoard', () => {
+  it('draws default colours in the colours of the current theme', () => {
+    const editor = new Editor();
+    editor.doc.add(shape('r', 10, 10));
+    const dark: Theme = {
+      ...theme,
+      shapeStroke: '#dedee2',
+      shapeFill: '#2c2c31',
+      handleFill: '#2c2c31',
+    };
+    const { ctx, calls } = recordingContext();
+
+    renderBoard(ctx, editor, 800, 600, 1, dark);
+
+    const values = (prop: string) => named(calls, `set ${prop}`).map(([, value]) => value);
+    expect(values('fillStyle')).toContain('#2c2c31');
+    expect(values('strokeStyle')).toContain('#dedee2');
+    expect(values('fillStyle')).not.toContain(DEFAULT_FILL);
+  });
+
   it('draws only the elements inside the viewport', () => {
     const editor = new Editor();
     editor.doc.add(shape('visible', 10, 10, { text: 'Видно' }));

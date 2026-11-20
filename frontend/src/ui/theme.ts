@@ -1,0 +1,49 @@
+import { useSyncExternalStore } from 'react';
+
+export type ThemeName = 'light' | 'dark';
+
+const STORAGE_KEY = 'whatever-theme';
+const darkQuery = (): MediaQueryList | null =>
+  typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+const listeners = new Set<() => void>();
+
+function savedTheme(): ThemeName | null {
+  const value = localStorage.getItem(STORAGE_KEY);
+  return value === 'light' || value === 'dark' ? value : null;
+}
+
+/** Тема, выбранная пользователем, а пока он не выбирал — тема системы. */
+export function currentTheme(): ThemeName {
+  return savedTheme() ?? (darkQuery()?.matches ? 'dark' : 'light');
+}
+
+function apply(): void {
+  document.documentElement.dataset.theme = currentTheme();
+  for (const listener of listeners) listener();
+}
+
+export function setTheme(theme: ThemeName): void {
+  localStorage.setItem(STORAGE_KEY, theme);
+  apply();
+}
+
+/** Применяет тему до первой отрисовки и следит за сменой темы в системе. */
+export function initTheme(): void {
+  apply();
+  darkQuery()?.addEventListener('change', () => {
+    if (!savedTheme()) apply();
+  });
+}
+
+export function subscribeTheme(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function useTheme(): ThemeName {
+  return useSyncExternalStore(subscribeTheme, currentTheme);
+}

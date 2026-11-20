@@ -20,17 +20,11 @@ import {
   type ShapeKind,
   isArrow,
 } from '../model/types';
-import { type Recognized, recognize } from '../recognition/recognize';
+import { recognize } from '../recognition/recognize';
 import { type KeyInput, handleShortcut } from './shortcuts';
 import { commitStroke } from './smartDrawing';
 
 export type Tool = 'select' | 'pen' | 'rectangle' | 'ellipse' | 'diamond' | 'arrow' | 'text';
-
-/**
- * Когда превращать набросок в фигуру: hold — если задержать курсор в конце штриха
- * (как в Telegram), always — после каждого штриха, off — никогда.
- */
-export type SmartMode = 'hold' | 'always' | 'off';
 
 export type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -48,9 +42,6 @@ const DEFAULT_SIZE: Record<ShapeKind, { w: number; h: number }> = {
   path: { w: 0, h: 0 },
 };
 const DUPLICATE_OFFSET = 24;
-/** Сколько держать курсор неподвижно в конце штриха, чтобы фигура выровнялась. */
-export const HOLD_MS = 450;
-const HOLD_STILL_PX = 3;
 
 export interface PointerInput {
   button?: number;
@@ -65,11 +56,11 @@ type Interaction =
   | { type: 'create'; id: string; origin: Point }
   | { type: 'arrowEnd'; id: string; which: 'start' | 'end'; created: boolean }
   | { type: 'marquee'; origin: Point; current: Point; base: Set<string> }
-  | { type: 'draw'; anchor: Point };
+  | { type: 'draw' };
 
 export interface EditorState {
   tool: Tool;
-  smartMode: SmartMode;
+  smartDrawing: boolean;
   selection: ReadonlySet<string>;
   editingId: string | null;
   camera: Camera;
@@ -87,11 +78,10 @@ export class Editor {
   editingId: string | null = null;
   marquee: Bounds | null = null;
   spaceHeld = false;
-  smartMode: SmartMode = 'hold';
-  /** Штрих, который рисуется сейчас (мировые координаты), и его распознанный вид при задержке. */
+  /** Умное рисование: каждый штрих превращается в ровную фигуру, если он на неё похож. */
+  smartDrawing = true;
+  /** Штрих, который рисуется сейчас, в мировых координатах. */
   stroke: Point[] | null = null;
-  strokePreview: Recognized | null = null;
-  private holdTimer: ReturnType<typeof setTimeout> | null = null;
 
   private interaction: Interaction = { type: 'none' };
   private readonly listeners = new Set<() => void>();
@@ -118,7 +108,7 @@ export class Editor {
   getState(): EditorState {
     return {
       tool: this.tool,
-      smartMode: this.smartMode,
+      smartDrawing: this.smartDrawing,
       selection: this.selection,
       editingId: this.editingId,
       camera: this.camera,
@@ -143,8 +133,8 @@ export class Editor {
 
   // ---------- Инструменты, выделение, камера ----------
 
-  setSmartMode(mode: SmartMode): void {
-    this.smartMode = mode;
+  setSmartDrawing(enabled: boolean): void {
+    this.smartDrawing = enabled;
     this.emit();
   }
 
@@ -249,7 +239,7 @@ export class Editor {
 
     switch (this.tool) {
       case 'pen':
-        this.beginStroke(world, screen);
+        this.beginStroke(world);
         return;
       case 'rectangle':
       case 'ellipse':
@@ -373,16 +363,10 @@ export class Editor {
         });
         return;
       }
-      case 'draw': {
+      case 'draw':
         this.stroke?.push(world);
-        if (distance(screen, it.anchor) > HOLD_STILL_PX) {
-          it.anchor = screen;
-          this.strokePreview = null;
-          this.scheduleHold();
-        }
         this.emit();
         return;
-      }
       case 'marquee': {
         it.current = world;
         const marquee = normalizeBounds(it.origin, world);
@@ -411,42 +395,18 @@ export class Editor {
 
   // ---------- Умное рисование ----------
 
-  private beginStroke(world: Point, screen: Point): void {
+  private beginStroke(world: Point): void {
     this.selection = new Set();
     this.stroke = [world];
-    this.strokePreview = null;
-    this.interaction = { type: 'draw', anchor: screen };
-    this.scheduleHold();
+    this.interaction = { type: 'draw' };
     this.emit();
   }
 
-  private scheduleHold(): void {
-    if (this.holdTimer) clearTimeout(this.holdTimer);
-    this.holdTimer = null;
-    if (this.smartMode !== 'hold') return;
-    this.holdTimer = setTimeout(() => {
-      this.holdTimer = null;
-      if (!this.stroke) return;
-      const result = recognize(this.stroke);
-      this.strokePreview = result.kind === 'none' ? null : result;
-      this.emit();
-    }, HOLD_MS);
-  }
-
   private finishStroke(): void {
-    if (this.holdTimer) clearTimeout(this.holdTimer);
-    this.holdTimer = null;
-    const { stroke, strokePreview } = this;
+    const { stroke } = this;
     this.stroke = null;
-    this.strokePreview = null;
     if (!stroke || stroke.length < 2) return;
-
-    const result =
-      this.smartMode === 'always'
-        ? recognize(stroke)
-        : this.smartMode === 'hold'
-          ? strokePreview
-          : null;
+    const result = this.smartDrawing ? recognize(stroke) : null;
     commitStroke(this.doc, stroke, result, this.camera.zoom);
   }
 
