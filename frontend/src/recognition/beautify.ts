@@ -1,4 +1,4 @@
-import type { Bounds, Point } from '../model/types';
+import type { Bounds, Point, ShapeKind } from '../model/types';
 
 export const SNAP_STEP = 8;
 /** Насколько стороны могут различаться, чтобы фигура стала квадратом или кругом. */
@@ -8,7 +8,7 @@ const SIZE_MATCH_TOLERANCE = 0.2;
 const AXIS_SNAP_DEGREES = 8;
 
 export interface Neighbour {
-  kind: string;
+  kind: ShapeKind;
   x: number;
   y: number;
   w: number;
@@ -17,19 +17,37 @@ export interface Neighbour {
 
 const snap = (value: number, step = SNAP_STEP) => Math.round(value / step) * step;
 
+/** Ближайшее к value из candidates, если оно не дальше maxDistance. */
+function nearestWithin(
+  candidates: readonly number[],
+  value: number,
+  maxDistance: number,
+): number | undefined {
+  let best: number | undefined;
+  let bestDistance = maxDistance;
+  for (const candidate of candidates) {
+    const d = Math.abs(candidate - value);
+    if (d < bestDistance) {
+      best = candidate;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
 /**
  * Делает распознанную фигуру аккуратной: почти квадрат — квадрат, размер как у похожего
  * соседа, центр на одной линии с соседями, координаты по сетке.
  */
 export function beautifyBounds(
-  kind: string,
+  kind: ShapeKind,
   raw: Bounds,
-  neighbours: Neighbour[],
+  neighbours: readonly Neighbour[],
   alignDistance: number,
 ): Bounds {
   let { w, h } = raw;
-  let cx = raw.x + raw.w / 2;
-  let cy = raw.y + raw.h / 2;
+  const cx = raw.x + raw.w / 2;
+  const cy = raw.y + raw.h / 2;
 
   if (Math.abs(w - h) / Math.max(w, h) < SQUARE_TOLERANCE) {
     w = h = (w + h) / 2;
@@ -49,27 +67,18 @@ export function beautifyBounds(
     h = Math.max(SNAP_STEP, snap(h));
   }
 
-  let alignedX = false;
-  let alignedY = false;
-  let bestX = alignDistance;
-  let bestY = alignDistance;
-  for (const n of neighbours) {
-    const ncx = n.x + n.w / 2;
-    const ncy = n.y + n.h / 2;
-    if (Math.abs(ncx - cx) < bestX) {
-      bestX = Math.abs(ncx - cx);
-      cx = ncx;
-      alignedX = true;
-    }
-    if (Math.abs(ncy - cy) < bestY) {
-      bestY = Math.abs(ncy - cy);
-      cy = ncy;
-      alignedY = true;
-    }
-  }
-
-  const x = alignedX ? cx - w / 2 : snap(cx - w / 2);
-  const y = alignedY ? cy - h / 2 : snap(cy - h / 2);
+  const alignedCx = nearestWithin(
+    neighbours.map((n) => n.x + n.w / 2),
+    cx,
+    alignDistance,
+  );
+  const alignedCy = nearestWithin(
+    neighbours.map((n) => n.y + n.h / 2),
+    cy,
+    alignDistance,
+  );
+  const x = alignedCx === undefined ? snap(cx - w / 2) : alignedCx - w / 2;
+  const y = alignedCy === undefined ? snap(cy - h / 2) : alignedCy - h / 2;
   return { x, y, w, h };
 }
 

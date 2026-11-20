@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { worldToScreen } from '../canvas/camera';
+import { FONT_SIZE, LINE_HEIGHT } from '../canvas/textLayout';
 import { isArrow } from '../model/types';
 import type { Editor } from './Editor';
 import styles from './TextEditor.module.css';
@@ -35,9 +36,13 @@ export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
         top: topLeft.y,
         width: element.w * zoom,
         height: element.h * zoom,
-        fontSize: 16 * zoom,
-        lineHeight: `${20 * zoom}px`,
-        paddingTop: Math.max(0, (element.h * zoom - 20 * zoom * Math.max(1, value.split('\n').length)) / 2),
+        fontSize: FONT_SIZE * zoom,
+        lineHeight: `${LINE_HEIGHT * zoom}px`,
+        // Текст по вертикали по центру, как на холсте.
+        paddingTop: Math.max(
+          0,
+          (element.h - LINE_HEIGHT * Math.max(1, value.split('\n').length)) * zoom * 0.5,
+        ),
         color: element.stroke,
       }}
       onChange={(e) => setValue(e.target.value)}

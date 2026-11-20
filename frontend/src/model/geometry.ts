@@ -10,6 +10,35 @@ export function normalizeBounds(a: Point, b: Point): Bounds {
   };
 }
 
+export function distance(a: Point, b: Point): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+/** Пары соседних точек ломаной. */
+export function* segments(points: readonly Point[]): Generator<[Point, Point]> {
+  let previous: Point | undefined;
+  for (const point of points) {
+    if (previous) yield [previous, point];
+    previous = point;
+  }
+}
+
+/** Наименьшая рамка, содержащая все точки. Для пустого списка — нулевая рамка в начале координат. */
+export function boundsOf(points: readonly Point[]): Bounds {
+  if (points.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 export function center(b: Bounds): Point {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
@@ -31,7 +60,8 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const lengthSq = dx * dx + dy * dy;
-  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
+  const t =
+    lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
@@ -52,10 +82,16 @@ export function boundaryPoint(shape: ShapeElement, toward: Point): Point {
       t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
       break;
     default:
-      t = Math.min(dx === 0 ? Infinity : hw / Math.abs(dx), dy === 0 ? Infinity : hh / Math.abs(dy));
+      t = Math.min(
+        dx === 0 ? Infinity : hw / Math.abs(dx),
+        dy === 0 ? Infinity : hh / Math.abs(dy),
+      );
   }
   return { x: c.x + dx * t, y: c.y + dy * t };
 }
+
+/** Штрих тоньше фигуры, поэтому попасть в него чуть проще. */
+const PATH_HIT_SLACK = 2;
 
 export type ElementLookup = (id: string) => BoardElement | undefined;
 
@@ -66,13 +102,18 @@ function boundShape(lookup: ElementLookup, id: string | undefined): ShapeElement
 }
 
 /** Реальные координаты концов стрелки с учётом привязки к фигурам. */
-export function resolveArrow(arrow: ArrowElement, lookup: ElementLookup): { start: Point; end: Point } {
+export function resolveArrow(
+  arrow: ArrowElement,
+  lookup: ElementLookup,
+): { start: Point; end: Point } {
   const startShape = boundShape(lookup, arrow.start.shapeId);
   const endShape = boundShape(lookup, arrow.end.shapeId);
   const startAnchor = startShape ? center(startShape) : arrow.start;
   const endAnchor = endShape ? center(endShape) : arrow.end;
   return {
-    start: startShape ? boundaryPoint(startShape, endAnchor) : { x: arrow.start.x, y: arrow.start.y },
+    start: startShape
+      ? boundaryPoint(startShape, endAnchor)
+      : { x: arrow.start.x, y: arrow.start.y },
     end: endShape ? boundaryPoint(endShape, startAnchor) : { x: arrow.end.x, y: arrow.end.y },
   };
 }
@@ -83,44 +124,42 @@ export function elementBounds(el: BoardElement, lookup: ElementLookup): Bounds {
   return normalizeBounds(start, end);
 }
 
-/** Попадает ли точка в элемент. tolerance задаётся в мировых единицах. */
 /** Точки рукописного штриха в мировых координатах. */
 export function pathPoints(el: ShapeElement): Point[] {
-  const points = el.points ?? [];
+  const flat = el.points ?? [];
   const result: Point[] = [];
-  for (let i = 0; i + 1 < points.length; i += 2) {
-    result.push({ x: el.x + points[i] * el.w, y: el.y + points[i + 1] * el.h });
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    const fx = flat[i] ?? 0;
+    const fy = flat[i + 1] ?? 0;
+    result.push({ x: el.x + fx * el.w, y: el.y + fy * el.h });
   }
   return result;
 }
 
 /** Переводит точки штриха в доли рамки, чтобы штрих масштабировался вместе с ней. */
-export function normalizePath(points: Point[]): { bounds: Bounds; points: number[] } {
-  const bounds = normalizeBounds(points[0], points[0]);
-  for (const p of points) {
-    const right = Math.max(bounds.x + bounds.w, p.x);
-    const bottom = Math.max(bounds.y + bounds.h, p.y);
-    bounds.x = Math.min(bounds.x, p.x);
-    bounds.y = Math.min(bounds.y, p.y);
-    bounds.w = right - bounds.x;
-    bounds.h = bottom - bounds.y;
-  }
-  const flat: number[] = [];
-  for (const p of points) {
-    flat.push(bounds.w ? (p.x - bounds.x) / bounds.w : 0, bounds.h ? (p.y - bounds.y) / bounds.h : 0);
-  }
+export function normalizePath(points: readonly Point[]): { bounds: Bounds; points: number[] } {
+  const bounds = boundsOf(points);
+  const flat = points.flatMap((p) => [
+    bounds.w ? (p.x - bounds.x) / bounds.w : 0,
+    bounds.h ? (p.y - bounds.y) / bounds.h : 0,
+  ]);
   return { bounds, points: flat };
 }
 
-export function hitTest(el: BoardElement, p: Point, lookup: ElementLookup, tolerance: number): boolean {
+/** Попадает ли точка в элемент. tolerance задаётся в мировых единицах. */
+export function hitTest(
+  el: BoardElement,
+  p: Point,
+  lookup: ElementLookup,
+  tolerance: number,
+): boolean {
   if (isArrow(el)) {
     const { start, end } = resolveArrow(el, lookup);
     return distanceToSegment(p, start, end) <= tolerance;
   }
   if (el.kind === 'path') {
-    const points = pathPoints(el);
-    for (let i = 1; i < points.length; i++) {
-      if (distanceToSegment(p, points[i - 1], points[i]) <= tolerance + 2) return true;
+    for (const [a, b] of segments(pathPoints(el))) {
+      if (distanceToSegment(p, a, b) <= tolerance + PATH_HIT_SLACK) return true;
     }
     return false;
   }

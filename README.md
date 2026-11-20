@@ -2,6 +2,8 @@
 
 Веб-приложение для создания диаграмм и совместной работы в реальном времени. Разворачивается на собственном сервере.
 
+Как устроено приложение и почему: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Запуск на сервере
 
 Нужны Linux и Docker с плагином Compose.
@@ -25,9 +27,8 @@ POSTGRES_PASSWORD=сложный-пароль docker compose up -d --build
 ```bash
 cd backend
 uv sync
-uv run uvicorn app.main:app --reload   # нужен PostgreSQL, адрес в WHATEVER_DATABASE_URL
-uv run pytest
-uv run ruff check . && uv run ruff format --check .
+uv run alembic upgrade head            # нужен PostgreSQL, адрес в WHATEVER_DATABASE_URL
+uv run uvicorn app.main:app --reload
 ```
 
 Фронтенд (запросы к `/api` и `/ws` проксируются на `localhost:8000`):
@@ -36,7 +37,23 @@ uv run ruff check . && uv run ruff format --check .
 cd frontend
 npm install
 npm run dev
-npm run test && npm run lint && npm run build
+```
+
+### Проверки перед pull request
+
+Те же проверки запускает CI, и pull request не принимается, пока они не пройдут.
+
+```bash
+# бэкенд: линтер, форматирование, строгая проверка типов, тесты с покрытием ≥ 90%
+cd backend
+uv run ruff check . && uv run ruff format --check .
+uv run mypy app tests alembic/env.py
+uv run pytest --cov
+
+# фронтенд: Prettier, ESLint, TypeScript, тесты с порогами покрытия
+cd frontend
+npm run check
+npm run build
 ```
 
 ## Управление на холсте
@@ -60,4 +77,10 @@ npm run test && npm run lint && npm run build
 
 Режим выбирается рядом с инструментом: «при задержке» (по умолчанию), «всегда» или «не выравнивать». Распознавание работает в браузере, без запросов к серверу.
 
-Стрелка, начатая или законченная на фигуре, привязывается к ней и следует за фигурой при перемещении. Пока сервера синхронизации нет, доска сохраняется в браузере (IndexedDB).
+Стрелка, начатая или законченная на фигуре, привязывается к ней и следует за фигурой при перемещении.
+
+## Совместная работа
+
+Доски перечислены на главной странице, у каждой свой адрес: чтобы позвать коллегу, отправьте ему ссылку. Изменения участников видны сразу, у каждого свой цвет курсора и выделения. Имя, под которым вас видят другие, задаётся справа в шапке доски.
+
+Доска хранится и в браузере, поэтому открывается мгновенно и работает без связи с сервером. Изменения, сделанные без сети, отправятся автоматически после подключения, а состояние подключения видно в шапке.

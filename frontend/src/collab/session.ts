@@ -1,0 +1,96 @@
+import { IndexeddbPersistence } from 'y-indexeddb';
+import { Awareness } from 'y-protocols/awareness';
+import { WebsocketProvider } from 'y-websocket';
+import * as Y from 'yjs';
+import { syncUrl } from '../api';
+import { Editor } from '../editor/Editor';
+import { BoardDocument } from '../model/document';
+import { Presence } from './presence';
+
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'not-found';
+
+/** Код закрытия от сервера: доски с таким id нет. */
+const BOARD_NOT_FOUND = 4404;
+
+/**
+ * Открытая доска: документ, редактор, присутствие участников и их связь с внешним миром.
+ *
+ * Документ и редактор живут, пока жив объект. Всё, что держит внешние ресурсы
+ * (IndexedDB, WebSocket, таймеры awareness), создаётся в start() и освобождается
+ * функцией, которую он возвращает, поэтому сессию можно запускать повторно.
+ */
+export class BoardSession {
+  readonly doc = new Y.Doc();
+  readonly editor: Editor;
+  readonly presence: Presence;
+  private currentStatus: ConnectionStatus = 'connecting';
+  private readonly listeners = new Set<() => void>();
+
+  constructor(
+    private readonly boardId: string,
+    userName: string,
+  ) {
+    this.editor = new Editor(new BoardDocument(this.doc));
+    this.presence = new Presence(this.doc.clientID, userName);
+  }
+
+  get status(): ConnectionStatus {
+    return this.currentStatus;
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Подключает локальную копию (доска открывается сразу и работает без сети)
+   * и синхронизацию с сервером. Возвращает функцию отключения.
+   */
+  start(): () => void {
+    this.setStatus('connecting');
+    const local = new IndexeddbPersistence(`whatever-board-${this.boardId}`, this.doc);
+    const awareness = new Awareness(this.doc);
+    const detachPresence = this.presence.attach(awareness);
+    const stopSelectionSync = this.syncSelection();
+
+    // Коды закрытия 4400–4499 y-websocket считает окончательными и больше не переподключается.
+    const provider = new WebsocketProvider(syncUrl(), this.boardId, this.doc, { awareness });
+    provider.on('status', ({ status }) => {
+      if (this.currentStatus === 'not-found') return;
+      // Пока клиент переподключается после обрыва, для пользователя это всё ещё «нет связи».
+      if (status === 'connecting' && this.currentStatus === 'disconnected') return;
+      this.setStatus(status);
+    });
+    provider.on('closed', ({ code }) => {
+      if (code === BOARD_NOT_FOUND) this.setStatus('not-found');
+    });
+
+    return () => {
+      stopSelectionSync();
+      detachPresence();
+      provider.destroy();
+      awareness.destroy();
+      void local.destroy();
+    };
+  }
+
+  /** Публикует выделение редактора, когда оно меняется. */
+  private syncSelection(): () => void {
+    let published = this.editor.selection;
+    this.presence.setSelection(published);
+    return this.editor.subscribe(() => {
+      if (this.editor.selection === published) return;
+      published = this.editor.selection;
+      this.presence.setSelection(published);
+    });
+  }
+
+  private setStatus(status: ConnectionStatus): void {
+    if (status === this.currentStatus) return;
+    this.currentStatus = status;
+    for (const listener of this.listeners) listener();
+  }
+}

@@ -1,52 +1,83 @@
 import * as Y from 'yjs';
-import type { ArrowElement, BoardElement } from './types';
+import type { ArrowEnd, BoardElement } from './types';
+import { isArrow } from './types';
+import { parseElement } from './validate';
 
 type ElementMap = Y.Map<unknown>;
 
+/** Происхождение локальных правок: только их отменяет Ctrl+Z, чужие правки не трогаются. */
 const LOCAL = Symbol('local-edit');
+
+/** Правки, сделанные быстрее этого интервала, объединяются в один шаг отмены. */
+const UNDO_CAPTURE_MS = 400;
+
+interface Snapshot {
+  /** Элементы в порядке отрисовки (снизу вверх). */
+  readonly list: readonly BoardElement[];
+  readonly byId: ReadonlyMap<string, BoardElement>;
+}
+
+function byZ(a: BoardElement, b: BoardElement): number {
+  return a.z - b.z || (a.id < b.id ? -1 : 1);
+}
 
 /**
  * Документ доски поверх Yjs. Каждый элемент хранится в своём Y.Map,
  * поэтому правки разных полей одного элемента от разных людей сливаются без потерь.
+ *
+ * Чтение идёт из неизменяемого снимка, который пересобирается только после изменений:
+ * поиск под курсором и отрисовка на каждом кадре не копируют данные Yjs заново.
  */
 export class BoardDocument {
   readonly doc: Y.Doc;
   private readonly elements: Y.Map<ElementMap>;
   private readonly undoManager: Y.UndoManager;
+  private snapshotCache: Snapshot | null = null;
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
     this.elements = doc.getMap<ElementMap>('elements');
+    // Регистрируется первым, чтобы остальные подписчики уже видели свежий снимок.
+    this.elements.observeDeep(() => {
+      this.snapshotCache = null;
+    });
     this.undoManager = new Y.UndoManager(this.elements, {
       trackedOrigins: new Set([LOCAL]),
-      captureTimeout: 400,
+      captureTimeout: UNDO_CAPTURE_MS,
     });
   }
 
-  list(): BoardElement[] {
-    const result: BoardElement[] = [];
-    this.elements.forEach((map) => result.push(map.toJSON() as BoardElement));
-    return result.sort((a, b) => a.z - b.z || (a.id < b.id ? -1 : 1));
+  private snapshot(): Snapshot {
+    if (!this.snapshotCache) {
+      const byId = new Map<string, BoardElement>();
+      this.elements.forEach((map) => {
+        // Элемент мог прийти от другого клиента: битые данные пропускаем, а не рисуем.
+        const element = parseElement(map.toJSON());
+        if (element) byId.set(element.id, Object.freeze(element));
+      });
+      this.snapshotCache = { list: [...byId.values()].sort(byZ), byId };
+    }
+    return this.snapshotCache;
+  }
+
+  list(): readonly BoardElement[] {
+    return this.snapshot().list;
   }
 
   get(id: string): BoardElement | undefined {
-    return this.elements.get(id)?.toJSON() as BoardElement | undefined;
+    return this.snapshot().byId.get(id);
   }
 
   has(id: string): boolean {
-    return this.elements.has(id);
+    return this.snapshot().byId.has(id);
   }
 
   get size(): number {
-    return this.elements.size;
+    return this.snapshot().list.length;
   }
 
   nextZ(): number {
-    let max = 0;
-    this.elements.forEach((map) => {
-      max = Math.max(max, (map.get('z') as number) ?? 0);
-    });
-    return max + 1;
+    return (this.list().at(-1)?.z ?? 0) + 1;
   }
 
   /** Выполняет несколько правок как одно изменение (одна рассылка, один шаг отмены). */
@@ -59,6 +90,7 @@ export class BoardDocument {
       const map = new Y.Map<unknown>();
       for (const [key, value] of Object.entries(element)) map.set(key, value);
       this.elements.set(element.id, map);
+      this.snapshotCache = null;
     });
   }
 
@@ -70,24 +102,26 @@ export class BoardDocument {
         if (key === 'id' || key === 'kind') continue;
         map.set(key, value);
       }
+      this.snapshotCache = null;
     });
   }
 
   /** Удаляет элементы. Стрелки, привязанные к удалённым фигурам, остаются со свободным концом. */
   remove(ids: Iterable<string>): void {
     const removed = new Set(ids);
+    const arrows = this.list().filter(isArrow);
     this.transact(() => {
       for (const id of removed) this.elements.delete(id);
-      this.elements.forEach((map, id) => {
-        if (map.get('kind') !== 'arrow') return;
-        const arrow = map.toJSON() as ArrowElement;
+      for (const arrow of arrows) {
+        if (removed.has(arrow.id)) continue;
         for (const which of ['start', 'end'] as const) {
-          const end = arrow[which];
+          const end: ArrowEnd = arrow[which];
           if (end.shapeId && removed.has(end.shapeId)) {
-            this.elements.get(id)!.set(which, { x: end.x, y: end.y });
+            this.elements.get(arrow.id)?.set(which, { x: end.x, y: end.y });
           }
         }
-      });
+      }
+      this.snapshotCache = null;
     });
   }
 
@@ -105,22 +139,20 @@ export class BoardDocument {
   }
 
   onChange(listener: () => void): () => void {
-    const handler = () => listener();
+    const handler = () => {
+      listener();
+    };
     this.elements.observeDeep(handler);
-    return () => this.elements.unobserveDeep(handler);
-  }
-
-  destroy(): void {
-    this.undoManager.destroy();
+    return () => {
+      this.elements.unobserveDeep(handler);
+    };
   }
 }
 
 let counter = 0;
+
+/** Короткий уникальный id: случайная часть плюс счётчик на случай одинаковых случайных значений. */
 export function newId(): string {
   counter += 1;
-  const random =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID().slice(0, 8)
-      : Math.random().toString(36).slice(2, 10);
-  return `${random}${counter.toString(36)}`;
+  return `${crypto.randomUUID().slice(0, 8)}${counter.toString(36)}`;
 }

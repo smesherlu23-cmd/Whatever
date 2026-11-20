@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { segments } from '../model/geometry';
 import type { Point } from '../model/types';
 import { recognize, resample, simplify } from './recognize';
 
@@ -10,7 +11,14 @@ function jitter(points: Point[], amount: number): Point[] {
   }));
 }
 
-function ellipse(cx: number, cy: number, rx: number, ry: number, n = 60, overshoot = 0.05): Point[] {
+function ellipse(
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  n = 60,
+  overshoot = 0.05,
+): Point[] {
   const points: Point[] = [];
   for (let i = 0; i <= n * (1 + overshoot); i++) {
     const t = (i / n) * Math.PI * 2 - Math.PI / 2;
@@ -21,16 +29,14 @@ function ellipse(cx: number, cy: number, rx: number, ry: number, n = 60, oversho
 
 function polyline(corners: Point[], perSide = 20): Point[] {
   const points: Point[] = [];
-  for (let i = 0; i < corners.length - 1; i++) {
+  for (const [a, b] of segments(corners)) {
     for (let k = 0; k < perSide; k++) {
       const t = k / perSide;
-      points.push({
-        x: corners[i].x + (corners[i + 1].x - corners[i].x) * t,
-        y: corners[i].y + (corners[i + 1].y - corners[i].y) * t,
-      });
+      points.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
     }
   }
-  points.push(corners[corners.length - 1]);
+  const last = corners.at(-1);
+  if (last) points.push(last);
   return points;
 }
 
@@ -85,17 +91,39 @@ describe('recognize', () => {
   });
 
   it('ignores tiny strokes', () => {
-    expect(recognize([{ x: 0, y: 0 }, { x: 3, y: 2 }]).kind).toBe('none');
+    expect(
+      recognize([
+        { x: 0, y: 0 },
+        { x: 3, y: 2 },
+      ]).kind,
+    ).toBe('none');
   });
 });
 
 describe('helpers', () => {
   it('simplifies a noisy straight line to two points', () => {
-    const line = jitter(polyline([{ x: 0, y: 0 }, { x: 100, y: 0 }]), 0.5);
+    const line = jitter(
+      polyline([
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ]),
+      0.5,
+    );
     expect(simplify(line, 2)).toHaveLength(2);
   });
 
   it('resamples to the requested count', () => {
-    expect(resample(polyline([{ x: 0, y: 0 }, { x: 100, y: 0 }], 3), 11)).toHaveLength(11);
+    expect(
+      resample(
+        polyline(
+          [
+            { x: 0, y: 0 },
+            { x: 100, y: 0 },
+          ],
+          3,
+        ),
+        11,
+      ),
+    ).toHaveLength(11);
   });
 });

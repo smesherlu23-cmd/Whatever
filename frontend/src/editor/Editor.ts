@@ -2,12 +2,12 @@ import { type Camera, initialCamera, panBy, screenToWorld, zoomAt } from '../can
 import { BoardDocument, newId } from '../model/document';
 import {
   contains,
+  distance,
   elementBounds,
-  hitTest,
   normalizeBounds,
-  normalizePath,
   resolveArrow,
 } from '../model/geometry';
+import { bindTargetAt, elementAt, hasText } from '../model/queries';
 import {
   type ArrowElement,
   type ArrowEnd,
@@ -20,8 +20,9 @@ import {
   type ShapeKind,
   isArrow,
 } from '../model/types';
-import { beautifyBounds, straightenLine } from '../recognition/beautify';
 import { type Recognized, recognize } from '../recognition/recognize';
+import { type KeyInput, handleShortcut } from './shortcuts';
+import { commitStroke } from './smartDrawing';
 
 export type Tool = 'select' | 'pen' | 'rectangle' | 'ellipse' | 'diamond' | 'arrow' | 'text';
 
@@ -50,18 +51,9 @@ const DUPLICATE_OFFSET = 24;
 /** Сколько держать курсор неподвижно в конце штриха, чтобы фигура выровнялась. */
 export const HOLD_MS = 450;
 const HOLD_STILL_PX = 3;
-const SMART_BIND_PX = 24;
-const SMART_ALIGN_PX = 12;
 
 export interface PointerInput {
   button?: number;
-  shift?: boolean;
-}
-
-export interface KeyInput {
-  key: string;
-  code?: string;
-  ctrl?: boolean;
   shift?: boolean;
 }
 
@@ -102,28 +94,25 @@ export class Editor {
   private holdTimer: ReturnType<typeof setTimeout> | null = null;
 
   private interaction: Interaction = { type: 'none' };
-  private listeners = new Set<() => void>();
-  private unsubscribeDoc: () => void;
+  private readonly listeners = new Set<() => void>();
 
   constructor(doc: BoardDocument = new BoardDocument()) {
     this.doc = doc;
-    this.unsubscribeDoc = doc.onChange(() => {
+    doc.onChange(() => {
       // Убираем из выделения то, что удалили (в том числе другие участники).
-      for (const id of this.selection) if (!doc.has(id)) this.selection.delete(id);
+      if ([...this.selection].some((id) => !doc.has(id))) {
+        this.selection = new Set([...this.selection].filter((id) => doc.has(id)));
+      }
       if (this.editingId && !doc.has(this.editingId)) this.editingId = null;
       this.emit();
     });
   }
 
-  destroy(): void {
-    if (this.holdTimer) clearTimeout(this.holdTimer);
-    this.unsubscribeDoc();
-    this.listeners.clear();
-  }
-
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   getState(): EditorState {
@@ -140,7 +129,17 @@ export class Editor {
     for (const listener of this.listeners) listener();
   }
 
-  private lookup = (id: string) => this.doc.get(id);
+  private readonly lookup = (id: string) => this.doc.get(id);
+
+  private arrow(id: string): ArrowElement | undefined {
+    const el = this.doc.get(id);
+    return el && isArrow(el) ? el : undefined;
+  }
+
+  private shape(id: string): ShapeElement | undefined {
+    const el = this.doc.get(id);
+    return el && !isArrow(el) ? el : undefined;
+  }
 
   // ---------- Инструменты, выделение, камера ----------
 
@@ -184,24 +183,11 @@ export class Editor {
   // ---------- Поиск под курсором ----------
 
   elementAt(world: Point): BoardElement | undefined {
-    const elements = this.doc.list();
-    const tolerance = this.px(HIT_TOLERANCE_PX);
-    for (let i = elements.length - 1; i >= 0; i--) {
-      if (hitTest(elements[i], world, this.lookup, tolerance)) return elements[i];
-    }
-    return undefined;
+    return elementAt(this.doc, world, this.px(HIT_TOLERANCE_PX));
   }
 
-  /** Фигура, к которой можно привязать конец стрелки. */
   private bindTargetAt(world: Point, exclude?: string): ShapeElement | undefined {
-    const elements = this.doc.list();
-    const tolerance = this.px(BIND_DISTANCE_PX);
-    for (let i = elements.length - 1; i >= 0; i--) {
-      const el = elements[i];
-      if (isArrow(el) || el.id === exclude || el.kind === 'path') continue;
-      if (hitTest(el, world, this.lookup, tolerance)) return el;
-    }
-    return undefined;
+    return bindTargetAt(this.doc, world, this.px(BIND_DISTANCE_PX), exclude);
   }
 
   /** Ручки изменения размера для одной выделенной фигуры. */
@@ -236,15 +222,15 @@ export class Editor {
     if (!el || !isArrow(el)) return undefined;
     const { start, end } = resolveArrow(el, this.lookup);
     const radius = this.px(HANDLE_SIZE_PX);
-    if (Math.hypot(start.x - world.x, start.y - world.y) <= radius) return { id: el.id, which: 'start' };
-    if (Math.hypot(end.x - world.x, end.y - world.y) <= radius) return { id: el.id, which: 'end' };
+    if (distance(start, world) <= radius) return { id: el.id, which: 'start' };
+    if (distance(end, world) <= radius) return { id: el.id, which: 'end' };
     return undefined;
   }
 
   singleSelected(): BoardElement | undefined {
     if (this.selection.size !== 1) return undefined;
     const [id] = this.selection;
-    return this.doc.get(id);
+    return id === undefined ? undefined : this.doc.get(id);
   }
 
   // ---------- Указатель ----------
@@ -376,18 +362,20 @@ export class Editor {
         return;
       }
       case 'arrowEnd': {
-        const arrow = this.doc.get(it.id) as ArrowElement | undefined;
+        const arrow = this.arrow(it.id);
         if (!arrow) return;
         const other = arrow[it.which === 'start' ? 'end' : 'start'];
         const target = this.bindTargetAt(world, other.shapeId);
         this.doc.update(it.id, {
-          [it.which]: target ? { x: world.x, y: world.y, shapeId: target.id } : { x: world.x, y: world.y },
+          [it.which]: target
+            ? { x: world.x, y: world.y, shapeId: target.id }
+            : { x: world.x, y: world.y },
         });
         return;
       }
       case 'draw': {
         this.stroke?.push(world);
-        if (Math.hypot(screen.x - it.anchor.x, screen.y - it.anchor.y) > HOLD_STILL_PX) {
+        if (distance(screen, it.anchor) > HOLD_STILL_PX) {
           it.anchor = screen;
           this.strokePreview = null;
           this.scheduleHold();
@@ -397,10 +385,11 @@ export class Editor {
       }
       case 'marquee': {
         it.current = world;
-        this.marquee = normalizeBounds(it.origin, world);
+        const marquee = normalizeBounds(it.origin, world);
+        this.marquee = marquee;
         const inside = this.doc
           .list()
-          .filter((el) => contains(this.marquee!, elementBounds(el, this.lookup)))
+          .filter((el) => contains(marquee, elementBounds(el, this.lookup)))
           .map((el) => el.id);
         this.selection = new Set([...it.base, ...inside]);
         this.emit();
@@ -447,85 +436,22 @@ export class Editor {
   private finishStroke(): void {
     if (this.holdTimer) clearTimeout(this.holdTimer);
     this.holdTimer = null;
-    const stroke = this.stroke;
-    const preview = this.strokePreview;
+    const { stroke, strokePreview } = this;
     this.stroke = null;
     this.strokePreview = null;
     if (!stroke || stroke.length < 2) return;
 
-    let result: Recognized | null = null;
-    if (this.smartMode === 'hold') result = preview;
-    if (this.smartMode === 'always') result = recognize(stroke);
-
-    // Сначала сохраняем рукописный штрих, потом заменяем его фигурой отдельным шагом:
-    // так одно Ctrl+Z возвращает набросок, а второе убирает его совсем.
-    const pathId = newId();
-    const { bounds, points } = normalizePath(stroke);
-    this.doc.stopCapturing();
-    this.doc.add({
-      id: pathId,
-      kind: 'path',
-      ...bounds,
-      points,
-      text: '',
-      stroke: DEFAULT_STROKE,
-      fill: 'transparent',
-      z: this.doc.nextZ(),
-    });
-    this.doc.stopCapturing();
-    if (result && result.kind !== 'none') this.replaceWithShape(pathId, result);
-  }
-
-  /** Заменяет штрих распознанной фигурой или стрелкой. Возвращает id нового элемента. */
-  private replaceWithShape(pathId: string, result: Exclude<Recognized, { kind: 'none' }>): string | null {
-    const z = this.doc.nextZ();
-    const id = newId();
-    if (result.kind === 'line') {
-      const tolerance = this.px(SMART_BIND_PX);
-      const from = this.bindTargetNear(result.start, tolerance, pathId);
-      const to = this.bindTargetNear(result.end, tolerance, pathId);
-      if (from && to && from.id === to.id) return null;
-      const straight = straightenLine(result.start, result.end);
-      const start: ArrowEnd = from ? { ...result.start, shapeId: from.id } : straight.start;
-      const end: ArrowEnd = to ? { ...result.end, shapeId: to.id } : straight.end;
-      this.doc.transact(() => {
-        this.doc.remove([pathId]);
-        this.doc.add({ id, kind: 'arrow', start, end, stroke: DEFAULT_STROKE, z });
-      });
-    } else {
-      const neighbours = this.doc
-        .list()
-        .filter((el): el is ShapeElement => !isArrow(el) && el.kind !== 'path' && el.kind !== 'text');
-      const bounds = beautifyBounds(result.kind, result.bounds, neighbours, this.px(SMART_ALIGN_PX));
-      this.doc.transact(() => {
-        this.doc.remove([pathId]);
-        this.doc.add({
-          id,
-          kind: result.kind,
-          ...bounds,
-          text: '',
-          stroke: DEFAULT_STROKE,
-          fill: DEFAULT_FILL,
-          z,
-        });
-      });
-    }
-    this.doc.stopCapturing();
-    return id;
-  }
-
-  private bindTargetNear(world: Point, tolerance: number, exclude: string): ShapeElement | undefined {
-    const elements = this.doc.list();
-    for (let i = elements.length - 1; i >= 0; i--) {
-      const el = elements[i];
-      if (isArrow(el) || el.id === exclude || el.kind === 'path') continue;
-      if (hitTest(el, world, this.lookup, tolerance)) return el;
-    }
-    return undefined;
+    const result =
+      this.smartMode === 'always'
+        ? recognize(stroke)
+        : this.smartMode === 'hold'
+          ? strokePreview
+          : null;
+    commitStroke(this.doc, stroke, result, this.camera.zoom);
   }
 
   private finishCreate(id: string, origin: Point): void {
-    const el = this.doc.get(id) as ShapeElement | undefined;
+    const el = this.shape(id);
     if (!el) return;
     if (el.w < MIN_SIZE && el.h < MIN_SIZE) {
       // Щелчок без перетаскивания: фигура стандартного размера с центром в точке щелчка.
@@ -539,11 +465,12 @@ export class Editor {
   }
 
   private finishArrow(id: string): void {
-    const arrow = this.doc.get(id) as ArrowElement | undefined;
+    const arrow = this.arrow(id);
     if (!arrow) return;
     const { start, end } = resolveArrow(arrow, this.lookup);
-    const sameShape = arrow.start.shapeId && arrow.start.shapeId === arrow.end.shapeId;
-    if (Math.hypot(end.x - start.x, end.y - start.y) < MIN_SIZE || sameShape) {
+    const sameShape =
+      arrow.start.shapeId !== undefined && arrow.start.shapeId === arrow.end.shapeId;
+    if (distance(start, end) < MIN_SIZE || sameShape) {
       this.doc.remove([id]);
       this.selection = new Set();
     }
@@ -607,7 +534,7 @@ export class Editor {
 
   doubleClick(screen: Point): void {
     const hit = this.elementAt(this.toWorld(screen));
-    if (hit && !isArrow(hit) && hit.kind !== 'path') {
+    if (hit && hasText(hit)) {
       this.selection = new Set([hit.id]);
       this.startEditing(hit.id);
     } else if (!hit) {
@@ -652,27 +579,32 @@ export class Editor {
   }
 
   duplicateSelection(): void {
-    const copies = new Map<string, string>();
-    const elements = [...this.selection].map((id) => this.doc.get(id)).filter((el) => el !== undefined);
-    for (const el of elements) copies.set(el.id, newId());
+    const originals = [...this.selection]
+      .map((id) => this.doc.get(id))
+      .filter((el) => el !== undefined);
+    if (originals.length === 0) return;
+    // Новые id выдаются заранее, чтобы копии стрелок цеплялись за копии фигур.
+    const pairs = originals.map((original) => ({ original, id: newId() }));
+    const copyIds = new Map(pairs.map(({ original, id }) => [original.id, id]));
+    const copyEnd = (end: ArrowEnd): ArrowEnd => {
+      const copiedShape = end.shapeId ? copyIds.get(end.shapeId) : undefined;
+      return copiedShape
+        ? { ...end, shapeId: copiedShape }
+        : { x: end.x + DUPLICATE_OFFSET, y: end.y + DUPLICATE_OFFSET };
+    };
     let z = this.doc.nextZ();
+    const copies: BoardElement[] = pairs.map(({ original: el, id }) =>
+      isArrow(el)
+        ? { ...el, id, start: copyEnd(el.start), end: copyEnd(el.end), z: z++ }
+        : { ...el, id, x: el.x + DUPLICATE_OFFSET, y: el.y + DUPLICATE_OFFSET, z: z++ },
+    );
+
     this.doc.stopCapturing();
     this.doc.transact(() => {
-      for (const el of elements) {
-        const id = copies.get(el.id)!;
-        if (isArrow(el)) {
-          const copyEnd = (end: ArrowEnd): ArrowEnd =>
-            end.shapeId && copies.has(end.shapeId)
-              ? { ...end, shapeId: copies.get(end.shapeId) }
-              : { x: end.x + DUPLICATE_OFFSET, y: end.y + DUPLICATE_OFFSET };
-          this.doc.add({ ...el, id, start: copyEnd(el.start), end: copyEnd(el.end), z: z++ });
-        } else {
-          this.doc.add({ ...el, id, x: el.x + DUPLICATE_OFFSET, y: el.y + DUPLICATE_OFFSET, z: z++ });
-        }
-      }
+      for (const copy of copies) this.doc.add(copy);
     });
     this.doc.stopCapturing();
-    this.selection = new Set(copies.values());
+    this.selection = new Set(copies.map((el) => el.id));
     this.emit();
   }
 
@@ -685,60 +617,16 @@ export class Editor {
   }
 
   /** Возвращает true, если клавиша обработана и браузеру её отдавать не нужно. */
-  keyDown(e: KeyInput): boolean {
+  keyDown(input: KeyInput): boolean {
     if (this.editingId) return false;
-    const key = e.key.toLowerCase();
-    if (e.ctrl) {
-      if (e.code === 'KeyZ' || key === 'z') {
-        if (e.shift) this.redo();
-        else this.undo();
-        return true;
-      }
-      if (e.code === 'KeyY' || key === 'y') {
-        this.redo();
-        return true;
-      }
-      if (e.code === 'KeyA' || key === 'a') {
-        this.select(this.doc.list().map((el) => el.id));
-        return true;
-      }
-      if (e.code === 'KeyD' || key === 'd') {
-        this.duplicateSelection();
-        return true;
-      }
-      return false;
-    }
-    if (key === 'delete' || key === 'backspace') {
-      this.deleteSelection();
-      return true;
-    }
-    if (key === 'escape') {
-      this.select([]);
-      this.setTool('select');
-      return true;
-    }
-    if (key === 'enter') {
-      const el = this.singleSelected();
-      if (el && !isArrow(el) && el.kind !== 'path') {
-        this.startEditing(el.id);
-        return true;
-      }
-      return false;
-    }
-    const tools: Record<string, Tool> = {
-      KeyV: 'select',
-      KeyP: 'pen',
-      KeyR: 'rectangle',
-      KeyO: 'ellipse',
-      KeyD: 'diamond',
-      KeyA: 'arrow',
-      KeyT: 'text',
-    };
-    const tool = e.code ? tools[e.code] : undefined;
-    if (tool) {
-      this.setTool(tool);
-      return true;
-    }
-    return false;
+    return handleShortcut(this, input);
+  }
+
+  /** Начинает редактирование текста единственной выделенной фигуры, если у неё есть текст. */
+  editSelectedText(): boolean {
+    const el = this.singleSelected();
+    if (!el || !hasText(el)) return false;
+    this.startEditing(el.id);
+    return true;
   }
 }

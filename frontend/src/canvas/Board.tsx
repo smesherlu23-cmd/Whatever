@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
-import type { Editor } from '../editor/Editor';
+import type { Presence } from '../collab/presence';
+import type { Editor, Tool } from '../editor/Editor';
+import { screenToWorld } from './camera';
 import styles from './Board.module.css';
 import { readTheme, renderBoard } from './render';
 
-const CURSORS: Record<string, string> = {
+const CURSORS: Record<Tool, string> = {
   select: 'default',
   pen: 'crosshair',
   rectangle: 'crosshair',
@@ -13,14 +15,16 @@ const CURSORS: Record<string, string> = {
   text: 'text',
 };
 
+const TYPING_TARGETS = 'input, textarea, select, [contenteditable="true"]';
+
 /** Холст доски. Передаёт события в редактор и перерисовывает кадр, только когда что-то изменилось. */
-export function Board({ editor }: { editor: Editor }) {
+export function Board({ editor, presence }: { editor: Editor; presence?: Presence }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
 
     let frame = 0;
     let dirty = true;
@@ -47,6 +51,7 @@ export function Board({ editor }: { editor: Editor }) {
         canvas.clientHeight,
         window.devicePixelRatio || 1,
         readTheme(canvas),
+        presence?.peers() ?? [],
       );
     };
 
@@ -65,17 +70,28 @@ export function Board({ editor }: { editor: Editor }) {
     };
     const onPointerMove = (e: PointerEvent) => {
       // Берём все промежуточные точки, которые браузер склеил в одно событие.
-      const events = e.getCoalescedEvents?.() ?? [e];
-      for (const ev of events.length ? events : [e]) {
+      // Safari до версии 18 не умеет getCoalescedEvents.
+      const coalesced = 'getCoalescedEvents' in e ? e.getCoalescedEvents() : [];
+      for (const ev of coalesced.length > 0 ? coalesced : [e]) {
         editor.pointerMove(local(ev), { shift: e.shiftKey });
       }
     };
-    const onPointerUp = () => editor.pointerUp();
-    const onDoubleClick = (e: MouseEvent) => editor.doubleClick(local(e));
+    const onPointerUp = () => {
+      editor.pointerUp();
+    };
+    const onHover = (e: PointerEvent) => {
+      presence?.setCursor(screenToWorld(editor.camera, local(e)));
+    };
+    const onLeave = () => {
+      presence?.setCursor(null);
+    };
+    const onDoubleClick = (e: MouseEvent) => {
+      editor.doubleClick(local(e));
+    };
 
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      // Пока пользователь печатает в поле ввода, клавиши принадлежат полю.
+      if (e.target instanceof Element && e.target.closest(TYPING_TARGETS)) return;
       if (e.code === 'Space') {
         editor.spaceHeld = e.type === 'keydown';
         requestDraw();
@@ -93,32 +109,33 @@ export function Board({ editor }: { editor: Editor }) {
     };
 
     const unsubscribe = editor.subscribe(requestDraw);
+    const unsubscribePresence = presence?.subscribe(requestDraw);
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
-    canvas.addEventListener('wheel', onWheel, { passive: false });
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    canvas.addEventListener('pointercancel', onPointerUp);
-    canvas.addEventListener('dblclick', onDoubleClick);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKey);
+
+    // Один AbortController снимает все обработчики разом и не даёт забыть какой-то из них.
+    const listeners = new AbortController();
+    const { signal } = listeners;
+    canvas.addEventListener('wheel', onWheel, { passive: false, signal });
+    canvas.addEventListener('pointerdown', onPointerDown, { signal });
+    canvas.addEventListener('pointermove', onPointerMove, { signal });
+    canvas.addEventListener('pointermove', onHover, { signal });
+    canvas.addEventListener('pointerup', onPointerUp, { signal });
+    canvas.addEventListener('pointercancel', onPointerUp, { signal });
+    canvas.addEventListener('pointerleave', onLeave, { signal });
+    canvas.addEventListener('dblclick', onDoubleClick, { signal });
+    window.addEventListener('keydown', onKey, { signal });
+    window.addEventListener('keyup', onKey, { signal });
     frame = requestAnimationFrame(render);
 
     return () => {
       cancelAnimationFrame(frame);
-      unsubscribe();
+      listeners.abort();
       observer.disconnect();
-      canvas.removeEventListener('wheel', onWheel);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      canvas.removeEventListener('pointercancel', onPointerUp);
-      canvas.removeEventListener('dblclick', onDoubleClick);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('keyup', onKey);
+      unsubscribe();
+      unsubscribePresence?.();
     };
-  }, [editor]);
+  }, [editor, presence]);
 
   return <canvas ref={canvasRef} className={styles.canvas} aria-label="Холст доски" />;
 }

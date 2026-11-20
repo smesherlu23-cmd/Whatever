@@ -1,0 +1,310 @@
+"""Комнаты синхронизации досок по протоколу Yjs (совместим с клиентом y-websocket).
+
+Каждая открытая доска — комната с документом pycrdt в памяти. Клиент и сервер обмениваются
+сообщениями синхронизации (SYNC) и присутствия (AWARENESS). Изменения документа сразу
+рассылаются остальным участникам, а в PostgreSQL пишутся пачками (см. Room.save).
+"""
+
+import asyncio
+import logging
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from functools import partial
+from typing import Any
+
+from pycrdt import (
+    Awareness,
+    Doc,
+    YMessageType,
+    create_awareness_message,
+    create_sync_message,
+    create_update_message,
+    handle_sync_message,
+    merge_updates,
+    read_message,
+)
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.models import Board, BoardUpdate
+
+log = logging.getLogger(__name__)
+
+# Тип сообщения y-websocket «запросить присутствие всех участников».
+QUERY_AWARENESS = 3
+# Сколько дельт копить, прежде чем при закрытии комнаты сжать их в один снимок.
+COMPACT_AFTER = 50
+# Изменения за это время пишутся в базу одной строкой. Перетаскивание фигуры даёт
+# десятки изменений в секунду, и писать каждое по отдельности было бы расточительно.
+SAVE_DELAY_SECONDS = 0.5
+
+Send = Callable[[bytes], Awaitable[None]]
+Sessions = async_sessionmaker[AsyncSession]
+
+
+class Connection:
+    """Одно подключение к комнате. Помнит id клиентов Yjs, чьё присутствие оно передавало."""
+
+    def __init__(self, send: Send) -> None:
+        self.send = send
+        self.client_ids: set[int] = set()
+
+
+class Room:
+    """Документ одной доски в памяти и её участники.
+
+    Принятые изменения пишутся в базу с задержкой SAVE_DELAY_SECONDS. Если сервер упадёт
+    в этот промежуток, изменения не потеряются: у клиентов есть локальная копия,
+    и при переподключении протокол Yjs досылает серверу всё, чего у него нет.
+    """
+
+    def __init__(self, board_id: uuid.UUID, sessions: Sessions) -> None:
+        self.board_id = board_id
+        self.sessions = sessions
+        self.doc: Doc[Any] = Doc()
+        self.awareness = Awareness(self.doc)
+        self.connections: set[Connection] = set()
+        self.loaded = False
+        self._received: list[bytes] = []
+        self._unsaved: list[bytes] = []
+        self._save_timer: asyncio.TimerHandle | None = None
+        self._saving: set[asyncio.Task[None]] = set()
+        self._save_lock = asyncio.Lock()
+        self._closed = False
+        self.doc.observe(lambda event: self._received.append(event.update))
+        self.awareness.observe(self._on_awareness)
+
+    # ---------- Загрузка и сохранение ----------
+
+    async def load(self) -> None:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(BoardUpdate.data)
+                .where(BoardUpdate.board_id == self.board_id)
+                .order_by(BoardUpdate.id)
+            )
+            for data in rows:
+                self.doc.apply_update(data)
+        self._received.clear()
+        self.loaded = True
+
+    async def save(self) -> None:
+        """Записывает накопленные изменения одной строкой."""
+        async with self._save_lock:
+            if not self._unsaved:
+                return
+            updates, self._unsaved = self._unsaved, []
+            try:
+                await self._persist(merge_updates(*updates))
+            except BaseException:
+                # Вернуть изменения в очередь, чтобы следующая попытка их записала.
+                self._unsaved[:0] = updates
+                raise
+
+    async def _persist(self, data: bytes) -> None:
+        async with self.sessions() as session:
+            session.add(BoardUpdate(board_id=self.board_id, data=data))
+            await session.execute(
+                update(Board).where(Board.id == self.board_id).values(updated_at=datetime.now(UTC))
+            )
+            await session.commit()
+
+    def _schedule_save(self) -> None:
+        if self._closed or self._save_timer is not None:
+            return
+        loop = asyncio.get_running_loop()
+        self._save_timer = loop.call_later(SAVE_DELAY_SECONDS, self._start_save)
+
+    def _start_save(self) -> None:
+        self._save_timer = None
+        task = asyncio.create_task(self._save_or_retry())
+        self._saving.add(task)
+        task.add_done_callback(self._saving.discard)
+
+    async def _save_or_retry(self) -> None:
+        try:
+            await self.save()
+        except Exception:
+            log.warning("board %s: saving failed, will retry", self.board_id, exc_info=True)
+            self._schedule_save()
+
+    async def close(self) -> None:
+        """Записывает всё несохранённое и сжимает историю доски."""
+        self._closed = True
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+            self._save_timer = None
+        await asyncio.gather(*self._saving, return_exceptions=True)
+        if not self.loaded:
+            # Документ не загрузился: сохранять и сжимать нечего, а сжатие стёрло бы историю.
+            return
+        await self.save()
+        await self.compact()
+
+    async def compact(self) -> None:
+        """Заменяет накопленные дельты одним снимком, чтобы доска открывалась быстрее."""
+        async with self.sessions() as session:
+            count = await session.scalar(
+                select(func.count()).where(BoardUpdate.board_id == self.board_id)
+            )
+            if not count or count <= COMPACT_AFTER:
+                return
+            await session.execute(delete(BoardUpdate).where(BoardUpdate.board_id == self.board_id))
+            session.add(BoardUpdate(board_id=self.board_id, data=self.doc.get_update()))
+            await session.commit()
+            log.info("board %s compacted from %d updates", self.board_id, count)
+
+    # ---------- Участники ----------
+
+    async def greet(self, conn: Connection) -> None:
+        """Отправляет новому участнику состояние документа и присутствие остальных."""
+        # Сервер первым отправляет своё состояние, клиент отвечает недостающими изменениями.
+        await conn.send(create_sync_message(self.doc))
+        await self._send_awareness(conn)
+
+    async def leave(self, conn: Connection) -> None:
+        self.connections.discard(conn)
+        ids = [i for i in conn.client_ids if i in self.awareness.states]
+        if ids:
+            self.awareness.remove_awareness_states(ids, conn)
+            message = create_awareness_message(self.awareness.encode_awareness_update(ids))
+            await self._broadcast(message, exclude=conn)
+
+    def _on_awareness(self, topic: str, payload: tuple[dict[str, Any], Any]) -> None:
+        changes, origin = payload
+        if isinstance(origin, Connection) and topic == "change":
+            origin.client_ids.update(changes.get("added", []))
+            for client_id in changes.get("removed", []):
+                origin.client_ids.discard(client_id)
+
+    # ---------- Сообщения ----------
+
+    async def receive(self, conn: Connection, message: bytes) -> None:
+        if not message:
+            return
+        kind = message[0]
+        if kind == YMessageType.SYNC:
+            await self._receive_sync(conn, message)
+        elif kind == YMessageType.AWARENESS:
+            self.awareness.apply_awareness_update(read_message(message[1:]), conn)
+            await self._broadcast(message, exclude=conn)
+        elif kind == QUERY_AWARENESS:
+            await self._send_awareness(conn)
+
+    async def _receive_sync(self, conn: Connection, message: bytes) -> None:
+        # Между применением сообщения и чтением изменений нет await,
+        # поэтому изменения из других подключений сюда не попадут.
+        reply = handle_sync_message(message[1:], self.doc)
+        updates, self._received = self._received, []
+        if reply is not None:
+            await conn.send(reply)
+        if not updates:
+            return
+        self._unsaved.extend(updates)
+        self._schedule_save()
+        for u in updates:
+            await self._broadcast(create_update_message(u), exclude=conn)
+
+    async def _send_awareness(self, conn: Connection) -> None:
+        states = list(self.awareness.states)
+        if states:
+            await conn.send(
+                create_awareness_message(self.awareness.encode_awareness_update(states))
+            )
+
+    async def _broadcast(self, message: bytes, exclude: Connection | None = None) -> None:
+        targets = [c for c in self.connections if c is not exclude]
+        results = await asyncio.gather(*(c.send(message) for c in targets), return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                log.debug("broadcast failed: %s", result)
+
+
+@dataclass(eq=False)
+class _OpenRoom:
+    room: Room
+    loading: asyncio.Task[None]
+
+
+class RoomManager:
+    """Держит открытые комнаты. Комната создаётся при первом подключении и закрывается
+    после ухода последнего участника.
+
+    Общая блокировка защищает только словарь комнат и списки участников. Загрузка доски
+    из базы и отправка данных клиентам идут вне её, поэтому медленная доска или медленный
+    клиент не задерживают подключение к другим доскам.
+    """
+
+    def __init__(self, sessions: Callable[[], Sessions]) -> None:
+        self._sessions = sessions
+        self._rooms: dict[uuid.UUID, _OpenRoom] = {}
+        self._closing: dict[uuid.UUID, asyncio.Task[None]] = {}
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def connect(self, board_id: uuid.UUID, conn: Connection) -> AsyncIterator[Room]:
+        """Подключает участника к комнате доски на время блока with."""
+        room = await self._join(board_id, conn)
+        try:
+            yield room
+        finally:
+            await self._leave(room, conn)
+
+    async def _join(self, board_id: uuid.UUID, conn: Connection) -> Room:
+        async with self._lock:
+            entry = self._rooms.get(board_id)
+            if entry is None:
+                room = Room(board_id, self._sessions())
+                entry = _OpenRoom(room, asyncio.create_task(self._load(room)))
+                self._rooms[board_id] = entry
+            entry.room.connections.add(conn)
+        try:
+            await asyncio.shield(entry.loading)
+            await entry.room.greet(conn)
+        except BaseException:
+            await self._leave(entry.room, conn)
+            raise
+        return entry.room
+
+    async def _load(self, room: Room) -> None:
+        # Если прошлая сессия этой доски ещё дописывает изменения, дождаться её.
+        previous = self._closing.get(room.board_id)
+        if previous is not None:
+            await asyncio.gather(previous, return_exceptions=True)
+        await room.load()
+
+    async def _leave(self, room: Room, conn: Connection) -> None:
+        await room.leave(conn)
+        closing: asyncio.Task[None] | None = None
+        async with self._lock:
+            entry = self._rooms.get(room.board_id)
+            if not room.connections and entry is not None and entry.room is room:
+                del self._rooms[room.board_id]
+                closing = asyncio.create_task(room.close())
+                self._closing[room.board_id] = closing
+                closing.add_done_callback(partial(self._forget_closing, room.board_id))
+        if closing is not None:
+            # Запись защищена от отмены: уже принятые изменения сохранятся,
+            # даже если обработчик подключения прервали.
+            await asyncio.shield(closing)
+
+    def _forget_closing(self, board_id: uuid.UUID, task: asyncio.Task[None]) -> None:
+        if self._closing.get(board_id) is task:
+            del self._closing[board_id]
+
+    async def shutdown(self) -> None:
+        """При остановке сервера дожидается записи всех принятых изменений."""
+        async with self._lock:
+            rooms = [entry.room for entry in self._rooms.values()]
+            self._rooms.clear()
+        await asyncio.gather(
+            *(room.close() for room in rooms),
+            *self._closing.values(),
+            return_exceptions=True,
+        )
+
+    def open_rooms(self) -> int:
+        return len(self._rooms)
