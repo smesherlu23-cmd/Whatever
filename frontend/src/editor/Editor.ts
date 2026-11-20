@@ -85,6 +85,7 @@ export class Editor {
   tool: Tool = 'select';
   selection = new Set<string>();
   editingId: string | null = null;
+  private draftText = '';
   marquee: Bounds | null = null;
   spaceHeld = false;
   smartMode: SmartMode = 'hold';
@@ -103,7 +104,11 @@ export class Editor {
       if ([...this.selection].some((id) => !doc.has(id))) {
         this.selection = new Set([...this.selection].filter((id) => doc.has(id)));
       }
-      if (this.editingId && !doc.has(this.editingId)) this.editingId = null;
+      // Фигуру удалил другой участник, пока здесь шёл ввод: сохранять текст некуда.
+      if (this.editingId && !doc.has(this.editingId)) {
+        this.editingId = null;
+        this.draftText = '';
+      }
       this.emit();
     });
   }
@@ -546,25 +551,50 @@ export class Editor {
 
   // ---------- Текст ----------
 
+  /**
+   * Открывает редактирование текста фигуры. Набранный текст хранится здесь, а не в поле
+   * ввода: так он сохранится при любом способе закончить ввод — Esc, щелчком по холсту,
+   * сменой инструмента или уходом фокуса.
+   */
   startEditing(id: string): void {
+    if (this.editingId === id) return;
+    if (this.editingId) this.stopEditing();
+    const el = this.doc.get(id);
+    if (!el || !hasText(el)) return;
     this.editingId = id;
+    this.draftText = el.text;
     this.emit();
   }
 
-  commitText(id: string, text: string): void {
+  /** Текст, который сейчас набирается. В документ попадёт при завершении ввода. */
+  get editingText(): string {
+    return this.draftText;
+  }
+
+  setEditingText(text: string): void {
+    this.draftText = text;
+  }
+
+  /** Завершает ввод и сохраняет текст. Пустой текстовый блок удаляется. */
+  stopEditing(): void {
+    const id = this.editingId;
+    if (id === null) return;
+    this.editingId = null;
+    this.saveText(id, this.draftText);
+    this.draftText = '';
+    this.emit();
+  }
+
+  private saveText(id: string, text: string): void {
     const el = this.doc.get(id);
-    if (!el || isArrow(el)) return;
+    if (!el || !hasText(el)) return;
     this.doc.stopCapturing();
     if (el.kind === 'text' && text.trim() === '') {
       this.doc.remove([id]);
     } else if (el.text !== text) {
       this.doc.update(id, { text });
     }
-  }
-
-  stopEditing(): void {
-    this.editingId = null;
-    this.emit();
+    this.doc.stopCapturing();
   }
 
   // ---------- Команды ----------
