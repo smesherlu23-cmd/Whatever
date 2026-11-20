@@ -112,15 +112,56 @@ describe('Editor', () => {
     editor.setTool('text');
     editor.pointerDown({ x: 100, y: 100 });
     editor.pointerUp();
-    const id = defined(editor.editingId, 'text being edited');
-    editor.commitText(id, '');
+    expect(editor.editingId).not.toBeNull();
     editor.stopEditing();
     expect(editor.doc.size).toBe(0);
 
     editor.setTool('rectangle');
     drag(editor, [0, 0], [100, 100]);
     editor.doubleClick({ x: 50, y: 50 });
-    editor.commitText(defined(editor.editingId), 'База данных');
+    editor.setEditingText('База данных');
+    editor.stopEditing();
     expect(shapes(editor.doc)[0]?.text).toBe('База данных');
+  });
+
+  it('saves the typed text however editing ends', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    const rect = defined(shapes(editor.doc)[0]);
+
+    // Щелчок по пустому месту доски.
+    editor.startEditing(rect.id);
+    editor.setEditingText('API');
+    editor.pointerDown({ x: 500, y: 500 });
+    editor.pointerUp();
+    expect(editor.doc.get(rect.id)).toMatchObject({ text: 'API' });
+
+    // Переход к редактированию другой фигуры.
+    editor.setTool('ellipse');
+    drag(editor, [200, 0], [300, 100]);
+    const ellipse = defined(shapes(editor.doc)[1]);
+    editor.startEditing(rect.id);
+    editor.setEditingText('API v2');
+    editor.startEditing(ellipse.id);
+    expect(editor.doc.get(rect.id)).toMatchObject({ text: 'API v2' });
+
+    // Ctrl+Z отменяет ввод одним шагом.
+    editor.stopEditing();
+    editor.undo();
+    expect(editor.doc.get(rect.id)).toMatchObject({ text: 'API' });
+  });
+
+  it('drops the draft when another participant deletes the shape', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    const rect = defined(shapes(editor.doc)[0]);
+    editor.startEditing(rect.id);
+    editor.setEditingText('Черновик');
+    editor.doc.remove([rect.id]);
+    expect(editor.editingId).toBeNull();
+    editor.stopEditing();
+    expect(editor.doc.size).toBe(0);
   });
 });
