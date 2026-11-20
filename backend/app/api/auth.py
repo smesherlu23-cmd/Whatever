@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.schemas import Password, UserOut, normalize_login
-from app.auth.dependencies import CurrentUser, Throttle
+from app.auth.dependencies import CurrentUser, OpenSockets, Throttle
 from app.auth.passwords import MAX_LENGTH, hash_password, needs_rehash, verify_password
 from app.auth.sessions import (
     COOKIE_NAME,
@@ -81,10 +81,12 @@ async def login(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(request: Request, response: Response, db: DbSession) -> None:
+async def logout(request: Request, response: Response, db: DbSession, sockets: OpenSockets) -> None:
     token = request.cookies.get(COOKIE_NAME)
     if token:
         await delete_session(db, token)
+        # Открытые в других вкладках доски тоже отключаются.
+        await sockets.close_session(token)
     response.delete_cookie(COOKIE_NAME, path="/")
 
 
@@ -95,7 +97,12 @@ async def me(user: CurrentUser) -> UserOut:
 
 @router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
-    body: PasswordChange, user: CurrentUser, response: Response, db: DbSession
+    body: PasswordChange,
+    user: CurrentUser,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    sockets: OpenSockets,
 ) -> None:
     """Меняет пароль и завершает все сессии, кроме новой: вход на других устройствах сбросится."""
     if not await verify_password(user.password_hash, body.current_password):
@@ -103,3 +110,5 @@ async def change_password(
     user.password_hash = await hash_password(body.new_password)
     await delete_user_sessions(db, user.id)
     _set_session_cookie(response, await create_session(db, user))
+    # Доски, открытые в этом браузере, остаются подключёнными, на других устройствах — нет.
+    await sockets.close_user(user.id, keep_token=request.cookies.get(COOKIE_NAME))

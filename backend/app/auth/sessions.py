@@ -14,7 +14,8 @@ from app.models import Session, User
 COOKIE_NAME = "whatever_session"
 
 
-def _hash(token: str) -> str:
+def token_hash(token: str) -> str:
+    """Под этим ключом сессия хранится в базе."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -28,7 +29,7 @@ async def create_session(db: AsyncSession, user: User) -> str:
     # Заодно убираем истёкшие сессии, чтобы таблица не росла бесконечно.
     await db.execute(delete(Session).where(Session.expires_at < now))
     token = secrets.token_urlsafe(32)
-    db.add(Session(token_hash=_hash(token), user_id=user.id, expires_at=now + _ttl()))
+    db.add(Session(token_hash=token_hash(token), user_id=user.id, expires_at=now + _ttl()))
     await db.commit()
     return token
 
@@ -48,7 +49,7 @@ async def user_for_token(db: AsyncSession, token: str) -> User | None:
         await db.execute(
             select(Session, User)
             .join(User, User.id == Session.user_id)
-            .where(Session.token_hash == _hash(token))
+            .where(Session.token_hash == token_hash(token))
         )
     ).first()
     if row is None:
@@ -67,7 +68,7 @@ async def user_for_token(db: AsyncSession, token: str) -> User | None:
 
 
 async def delete_session(db: AsyncSession, token: str) -> None:
-    await db.execute(delete(Session).where(Session.token_hash == _hash(token)))
+    await db.execute(delete(Session).where(Session.token_hash == token_hash(token)))
     await db.commit()
 
 

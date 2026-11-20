@@ -18,6 +18,9 @@ from pycrdt import (
 )
 from starlette.websockets import WebSocketDisconnect
 
+from app.models import Role
+from tests.conftest import PASSWORD, create_user, log_in
+
 
 class YClient:
     """Минимальный клиент Yjs поверх тестового WebSocket."""
@@ -168,3 +171,61 @@ def test_sync_from_another_site_is_rejected(client: TestClient) -> None:
     ):
         ws.receive_bytes()
     assert closed.value.code == 4403
+
+
+def close_code(ws: Any) -> int:
+    """Код, с которым сервер закрыл соединение. Сообщения, пришедшие раньше, пропускаются."""
+    while True:
+        try:
+            ws.receive_bytes()
+        except WebSocketDisconnect as closed:
+            return closed.code
+
+
+def test_blocking_a_user_disconnects_their_open_boards(anon_client: TestClient) -> None:
+    client = anon_client
+    log_in(client, create_user(client, Role.ADMIN))
+    admin_cookies = dict(client.cookies)
+    board = new_board(client)
+    login = create_user(client)
+    user_id = next(u["id"] for u in client.get("/api/admin/users").json() if u["login"] == login)
+
+    client.cookies.clear()
+    log_in(client, login)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        YClient(ws).handshake()
+        client.cookies.clear()
+        client.cookies.update(admin_cookies)
+        client.patch(f"/api/admin/users/{user_id}", json={"is_active": False})
+        assert close_code(ws) == 4401
+
+
+def test_password_change_disconnects_other_devices_only(client: TestClient) -> None:
+    board = new_board(client)
+    login = client.get("/api/auth/me").json()["login"]
+    this_browser = dict(client.cookies)
+    log_in(client, login)  # вход с другого устройства
+
+    with client.websocket_connect(f"/ws/boards/{board}") as other_ws:
+        YClient(other_ws).handshake()
+        client.cookies.clear()
+        client.cookies.update(this_browser)
+        with client.websocket_connect(f"/ws/boards/{board}") as this_ws:
+            this = YClient(this_ws)
+            this.handshake()
+            changed = client.post(
+                "/api/auth/password",
+                json={"current_password": PASSWORD, "new_password": "brand-new-password"},
+            )
+            assert changed.status_code == 204
+            assert close_code(other_ws) == 4401
+            this.set("still-here", 1)
+            this.flush()
+
+
+def test_logout_disconnects_boards_of_this_session(client: TestClient) -> None:
+    board = new_board(client)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        YClient(ws).handshake()
+        client.post("/api/auth/logout")
+        assert close_code(ws) == 4401

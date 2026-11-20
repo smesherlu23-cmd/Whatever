@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.schemas import Login, Password, PersonName, UserOut
-from app.auth.dependencies import AdminUser, admin_user
+from app.auth.dependencies import AdminUser, OpenSockets, admin_user
 from app.auth.passwords import hash_password
 from app.auth.sessions import delete_user_sessions
 from app.db import DbSession
@@ -65,7 +65,7 @@ async def create_user(body: UserCreate, db: DbSession) -> UserOut:
 
 @router.patch("/{user_id}")
 async def update_user(
-    user_id: uuid.UUID, body: UserUpdate, admin: AdminUser, db: DbSession
+    user_id: uuid.UUID, body: UserUpdate, admin: AdminUser, db: DbSession, sockets: OpenSockets
 ) -> UserOut:
     user = await _get(db, user_id)
     if user.id == admin.id and (body.is_active is False or body.role == Role.USER):
@@ -81,8 +81,11 @@ async def update_user(
         user.is_active = body.is_active
     if body.password is not None:
         user.password_hash = await hash_password(body.password)
-    if body.is_active is False or body.password is not None:
-        # Заблокированный или сменивший пароль пользователь выходит на всех устройствах.
+    # Заблокированный или получивший новый пароль пользователь выходит на всех устройствах.
+    signed_out = body.is_active is False or body.password is not None
+    if signed_out:
         await delete_user_sessions(db, user.id)
     await db.commit()
+    if signed_out:
+        await sockets.close_user(user.id)
     return UserOut.model_validate(user)

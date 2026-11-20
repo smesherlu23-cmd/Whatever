@@ -10,6 +10,7 @@ from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.auth.throttle import LoginThrottle
 from app.db import DbSession
 from app.models import Role, User
+from app.sync.sockets import SessionSockets
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -62,3 +63,11 @@ def login_throttle(request: Request) -> LoginThrottle:
 
 
 Throttle = Annotated[LoginThrottle, Depends(login_throttle)]
+
+
+def session_sockets(request: Request) -> SessionSockets:
+    sockets: SessionSockets = request.app.state.sockets
+    return sockets
+
+
+OpenSockets = Annotated[SessionSockets, Depends(session_sockets)]

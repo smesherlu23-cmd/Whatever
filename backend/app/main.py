@@ -8,6 +8,7 @@ from app.auth.dependencies import same_origin
 from app.auth.throttle import LoginThrottle
 from app.db import dispose_engine, session_factory
 from app.sync.room import RoomManager
+from app.sync.sockets import SessionSockets
 
 
 @asynccontextmanager
@@ -15,6 +16,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     rooms = RoomManager(session_factory)
     app.state.rooms = rooms
     app.state.login_throttle = LoginThrottle()
+    app.state.sockets = SessionSockets()
     yield
     await rooms.shutdown()
     await dispose_engine()
