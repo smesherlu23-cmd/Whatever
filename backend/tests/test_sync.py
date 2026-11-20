@@ -146,3 +146,25 @@ def test_unknown_board_is_rejected(client: TestClient) -> None:
     with client.websocket_connect(missing) as ws, pytest.raises(WebSocketDisconnect) as closed:
         ws.receive_bytes()
     assert closed.value.code == 4404
+
+
+def test_sync_needs_a_login(client: TestClient) -> None:
+    board = new_board(client)
+    client.post("/api/auth/logout")
+    with (
+        client.websocket_connect(f"/ws/boards/{board}") as ws,
+        pytest.raises(WebSocketDisconnect) as closed,
+    ):
+        ws.receive_bytes()
+    assert closed.value.code == 4401
+
+
+def test_sync_from_another_site_is_rejected(client: TestClient) -> None:
+    board = new_board(client)
+    headers = {"Origin": "https://evil.example"}
+    with (
+        client.websocket_connect(f"/ws/boards/{board}", headers=headers) as ws,
+        pytest.raises(WebSocketDisconnect) as closed,
+    ):
+        ws.receive_bytes()
+    assert closed.value.code == 4403

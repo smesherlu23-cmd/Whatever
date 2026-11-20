@@ -63,6 +63,8 @@ jobs:
           uv run alembic upgrade head
           uv run alembic downgrade base
           uv run alembic upgrade head
+      - name: Models match migrations
+        run: uv run alembic check
 
   frontend:
     name: Frontend (format, lint, types, tests, build)
