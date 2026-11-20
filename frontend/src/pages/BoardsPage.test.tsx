@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { withAuth } from '../testing/auth';
 import { BoardsPage } from './BoardsPage';
 
 const BOARD = {
@@ -26,7 +27,7 @@ describe('BoardsPage', () => {
     stubServer((_url, init) =>
       init?.method === 'POST' ? Response.json(BOARD) : Response.json([]),
     );
-    render(<BoardsPage />);
+    render(withAuth(<BoardsPage />));
     expect(await screen.findByText('Досок пока нет. Создайте первую.')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Создать доску' }));
@@ -40,7 +41,7 @@ describe('BoardsPage', () => {
       init?.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json([BOARD]),
     );
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<BoardsPage />);
+    render(withAuth(<BoardsPage />));
 
     fireEvent.click(await screen.findByRole('button', { name: `Удалить доску ${BOARD.name}` }));
     await waitFor(() => {
@@ -53,7 +54,7 @@ describe('BoardsPage', () => {
       'fetch',
       vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     );
-    render(<BoardsPage />);
+    render(withAuth(<BoardsPage />));
     expect((await screen.findByRole('alert')).textContent).toBe(
       'Сервер недоступен. Попробуйте обновить страницу.',
     );

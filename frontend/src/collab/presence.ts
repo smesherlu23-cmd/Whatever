@@ -1,7 +1,7 @@
 import type { Awareness } from 'y-protocols/awareness';
 import type { Point } from '../model/types';
 import { isPoint, isRecord, isStringArray } from '../model/validate';
-import { colorFor } from './user';
+import { colorFor } from './colors';
 
 export interface Peer {
   clientId: number;

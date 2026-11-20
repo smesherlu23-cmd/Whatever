@@ -7,7 +7,7 @@ import { useEditorState } from '../editor/useEditorState';
 import { Toolbar } from '../ui/Toolbar';
 import styles from './pages.module.css';
 
-/** Холст с панелью инструментов. Шапку страницы передаёт родитель. */
+/** Холст с панелью инструментов. Шапку страницы целиком передаёт родитель. */
 export function BoardView({
   editor,
   presence,
@@ -20,7 +20,7 @@ export function BoardView({
   const state = useEditorState(editor);
   return (
     <div className={styles.app}>
-      <header className={styles.header}>{header}</header>
+      {header}
       <main className={styles.main}>
         <Board editor={editor} presence={presence} />
         {state.editingId && (

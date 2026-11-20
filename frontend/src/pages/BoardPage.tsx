@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useAuth } from '../auth/context';
 import type { Peer } from '../collab/presence';
 import { BoardSession, type ConnectionStatus } from '../collab/session';
-import { loadUserName, saveUserName } from '../collab/user';
-import { Link } from '../ui/Link';
+import { AppHeader } from './AppHeader';
 import { BoardView } from './BoardView';
+import { NotFoundPage } from './NotFoundPage';
 import styles from './pages.module.css';
 
 const STATUS_TEXT: Record<ConnectionStatus, string> = {
@@ -15,8 +16,8 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 };
 
 export function BoardPage({ boardId }: { boardId: string }) {
-  const [userName, setUserName] = useState(loadUserName);
-  const [session] = useState(() => new BoardSession(boardId, userName));
+  const { user } = useAuth();
+  const [session] = useState(() => new BoardSession(boardId, user.name));
   const [status, setStatus] = useState<ConnectionStatus>(session.status);
   const [peers, setPeers] = useState<readonly Peer[]>([]);
 
@@ -36,54 +37,34 @@ export function BoardPage({ boardId }: { boardId: string }) {
   }, [session]);
 
   useEffect(() => {
-    const name = userName.trim();
-    if (name) session.presence.setUser(name);
-  }, [session, userName]);
+    session.presence.setUser(user.name);
+  }, [session, user.name]);
 
   if (status === 'not-found') {
-    return (
-      <div className={styles.page}>
-        <p>Доска не найдена. Возможно, её удалили.</p>
-        <Link to="/">К списку досок</Link>
-      </div>
-    );
+    return <NotFoundPage message="Доска не найдена. Возможно, её удалили." />;
   }
-
-  const commitUserName = () => {
-    const name = userName.trim();
-    if (name) saveUserName(name);
-    else setUserName(loadUserName());
-  };
 
   return (
     <BoardView
       editor={session.editor}
       presence={session.presence}
       header={
-        <>
-          <Link className={styles.logo} to="/" title="К списку досок">
-            Whatever
-          </Link>
+        <AppHeader
+          actions={
+            <ul className={styles.peers} aria-label="Участники">
+              {peers.map((peer) => (
+                <li key={peer.clientId} title={peer.name} style={{ background: peer.color }}>
+                  {peer.name.slice(0, 1).toUpperCase()}
+                </li>
+              ))}
+            </ul>
+          }
+        >
           <BoardName boardId={boardId} online={status === 'connected'} />
           <span className={styles.status} data-status={status}>
             {STATUS_TEXT[status]}
           </span>
-          <span className={styles.spacer} />
-          <ul className={styles.peers} aria-label="Участники">
-            {peers.map((peer) => (
-              <li key={peer.clientId} title={peer.name} style={{ background: peer.color }}>
-                {peer.name.slice(0, 1).toUpperCase()}
-              </li>
-            ))}
-          </ul>
-          <input
-            className={styles.userName}
-            aria-label="Ваше имя"
-            value={userName}
-            onChange={(e) => setUserName(e.target.value)}
-            onBlur={commitUserName}
-          />
-        </>
+        </AppHeader>
       }
     />
   );

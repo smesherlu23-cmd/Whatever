@@ -10,20 +10,6 @@ export const PEER_COLORS = [
   '#8a6d3b',
 ] as const;
 
-const NAME_KEY = 'whatever-user-name';
-
-export function loadUserName(): string {
-  const saved = localStorage.getItem(NAME_KEY);
-  if (saved) return saved;
-  const name = `Гость ${Math.floor(1000 + Math.random() * 9000)}`;
-  localStorage.setItem(NAME_KEY, name);
-  return name;
-}
-
-export function saveUserName(name: string): void {
-  localStorage.setItem(NAME_KEY, name);
-}
-
 export function colorFor(clientId: number): string {
   return PEER_COLORS[clientId % PEER_COLORS.length] ?? PEER_COLORS[0];
 }

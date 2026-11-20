@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { onSignedOut } from '../api';
 import { FakeSocket } from '../testing/fakeSocket';
 import { BoardSession } from './session';
 
@@ -55,6 +56,20 @@ describe('BoardSession', () => {
     vi.advanceTimersByTime(10_000);
     expect(FakeSocket.instances).toHaveLength(1);
     stop();
+  });
+
+  it('reports a lost session and stops reconnecting', () => {
+    const signedOut = vi.fn();
+    const stopListening = onSignedOut(signedOut);
+    const session = new BoardSession('board-1', 'Анна');
+    const stop = session.start();
+    FakeSocket.last().closeByServer(4401);
+
+    expect(signedOut).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(10_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+    stop();
+    stopListening();
   });
 
   it('can be started again after it was stopped', () => {

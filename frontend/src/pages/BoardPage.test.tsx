@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withAuth } from '../testing/auth';
 import { FakeSocket } from '../testing/fakeSocket';
 import { BoardPage } from './BoardPage';
 
@@ -29,7 +30,7 @@ describe('BoardPage', () => {
   });
 
   it('shows the connection status and loads the name once online', async () => {
-    render(<BoardPage boardId="b1" />);
+    render(withAuth(<BoardPage boardId="b1" />));
     expect(screen.getByText('Подключение…')).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
 
@@ -41,7 +42,7 @@ describe('BoardPage', () => {
   });
 
   it('renames the board on Enter and ignores an empty name', async () => {
-    render(<BoardPage boardId="b1" />);
+    render(withAuth(<BoardPage boardId="b1" />));
     act(() => {
       FakeSocket.last().open();
     });
@@ -62,7 +63,7 @@ describe('BoardPage', () => {
   });
 
   it('tells the user when the board does not exist', () => {
-    render(<BoardPage boardId="b1" />);
+    render(withAuth(<BoardPage boardId="b1" />));
     act(() => {
       FakeSocket.last().closeByServer(4404);
     });
