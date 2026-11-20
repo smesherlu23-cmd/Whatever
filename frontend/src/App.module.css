@@ -1,0 +1,48 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  font-weight: 700;
+}
+
+.title {
+  color: var(--text-muted);
+}
+
+.main {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+.toolbar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.zoom {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  padding: 4px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}

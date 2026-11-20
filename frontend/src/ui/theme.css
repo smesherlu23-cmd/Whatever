@@ -1,0 +1,68 @@
+/* Серая палитра Whatever. Все цвета интерфейса берутся только из этих переменных. */
+:root {
+  --gray-0: #ffffff;
+  --gray-50: #f7f7f8;
+  --gray-100: #eeeef0;
+  --gray-200: #dedee2;
+  --gray-300: #c4c4ca;
+  --gray-400: #9d9da5;
+  --gray-500: #76767f;
+  --gray-600: #5a5a62;
+  --gray-700: #43434a;
+  --gray-800: #2c2c31;
+  --gray-900: #1b1b1f;
+
+  --bg-app: var(--gray-50);
+  --bg-panel: var(--gray-0);
+  --bg-hover: var(--gray-100);
+  --bg-active: var(--gray-800);
+  --border: var(--gray-200);
+  --text: var(--gray-900);
+  --text-muted: var(--gray-500);
+  --text-on-active: var(--gray-0);
+  --canvas-bg: var(--gray-50);
+  --canvas-grid: var(--gray-300);
+
+  --radius: 8px;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.06);
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg-app: var(--gray-900);
+  --bg-panel: var(--gray-800);
+  --bg-hover: var(--gray-700);
+  --bg-active: var(--gray-100);
+  --border: var(--gray-700);
+  --text: var(--gray-50);
+  --text-muted: var(--gray-400);
+  --text-on-active: var(--gray-900);
+  --canvas-bg: var(--gray-900);
+  --canvas-grid: var(--gray-700);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg-app);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}

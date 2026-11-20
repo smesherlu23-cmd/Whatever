@@ -1,0 +1,27 @@
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover {
+  background: var(--bg-hover);
+}
+
+.button[aria-pressed='true'] {
+  background: var(--bg-active);
+  color: var(--text-on-active);
+}
