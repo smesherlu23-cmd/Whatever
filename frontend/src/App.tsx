@@ -36,6 +36,8 @@ export function App({ persist = true }: { persist?: boolean }) {
           <Toolbar
             tool={state.tool}
             onChange={(tool) => editor.setTool(tool)}
+            smartMode={state.smartMode}
+            onSmartModeChange={(mode) => editor.setSmartMode(mode)}
             onUndo={() => editor.undo()}
             onRedo={() => editor.redo()}
           />

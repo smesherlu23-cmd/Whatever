@@ -5,6 +5,7 @@ import { readTheme, renderBoard } from './render';
 
 const CURSORS: Record<string, string> = {
   select: 'default',
+  pen: 'crosshair',
   rectangle: 'crosshair',
   ellipse: 'crosshair',
   diamond: 'crosshair',

@@ -1,6 +1,7 @@
 import type { Point } from '../canvas/camera';
 
-export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'text';
+/** path — рукописный штрих, который не распознан как фигура. */
+export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'text' | 'path';
 
 export interface ShapeElement {
   id: string;
@@ -13,6 +14,8 @@ export interface ShapeElement {
   stroke: string;
   fill: string;
   z: number;
+  /** Только для path: точки x0, y0, x1, y1, … в долях рамки (0..1). */
+  points?: number[];
 }
 
 /** Конец стрелки: свободная точка или привязка к фигуре. */

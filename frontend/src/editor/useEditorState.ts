@@ -1,9 +1,29 @@
 import { useEffect, useState } from 'react';
 import type { Editor, EditorState } from './Editor';
 
-/** Подписка React-компонента на состояние редактора. */
+function same(a: EditorState, b: EditorState): boolean {
+  return (
+    a.tool === b.tool &&
+    a.smartMode === b.smartMode &&
+    a.selection === b.selection &&
+    a.editingId === b.editingId &&
+    a.camera === b.camera
+  );
+}
+
+/**
+ * Подписка React-компонента на состояние редактора. Перерисовывает интерфейс только
+ * когда меняется то, что он показывает, а не на каждое движение мыши.
+ */
 export function useEditorState(editor: Editor): EditorState {
   const [state, setState] = useState(() => editor.getState());
-  useEffect(() => editor.subscribe(() => setState(editor.getState())), [editor]);
+  useEffect(
+    () =>
+      editor.subscribe(() => {
+        const next = editor.getState();
+        setState((prev) => (same(prev, next) ? prev : next));
+      }),
+    [editor],
+  );
   return state;
 }

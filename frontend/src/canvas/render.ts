@@ -1,6 +1,6 @@
 import type { Editor } from '../editor/Editor';
-import { elementBounds, intersects, resolveArrow } from '../model/geometry';
-import type { ArrowElement, BoardElement, ShapeElement } from '../model/types';
+import { elementBounds, intersects, pathPoints, resolveArrow } from '../model/geometry';
+import type { ArrowElement, BoardElement, Point, ShapeElement } from '../model/types';
 import { isArrow } from '../model/types';
 import { screenToWorld } from './camera';
 import { drawGrid } from './grid';
@@ -11,6 +11,7 @@ export interface Theme {
   selection: string;
   handleFill: string;
   marqueeFill: string;
+  ink: string;
 }
 
 export function readTheme(el: Element): Theme {
@@ -22,6 +23,7 @@ export function readTheme(el: Element): Theme {
     selection: v('--selection'),
     handleFill: v('--bg-panel'),
     marqueeFill: v('--selection-fill'),
+    ink: v('--text'),
   };
 }
 
@@ -73,11 +75,26 @@ function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
     case 'text':
       ctx.rect(x, y, w, h);
       break;
+    case 'path':
+      polyline(ctx, pathPoints(el));
+      break;
   }
+}
+
+function polyline(ctx: CanvasRenderingContext2D, points: Point[]): void {
+  if (points.length === 0) return;
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
 }
 
 function drawShape(ctx: CanvasRenderingContext2D, el: ShapeElement, editing: boolean): void {
   shapePath(ctx, el);
+  if (el.kind === 'path') {
+    ctx.strokeStyle = el.stroke;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    return;
+  }
   if (el.kind !== 'text') {
     if (el.fill !== 'transparent') {
       ctx.fillStyle = el.fill;
@@ -154,6 +171,24 @@ function drawSelection(ctx: CanvasRenderingContext2D, editor: Editor, theme: The
   }
 }
 
+/** Штрих, который рисуется прямо сейчас, или фигура, в которую он превратится. */
+function drawStroke(ctx: CanvasRenderingContext2D, editor: Editor, theme: Theme): void {
+  const preview = editor.strokePreview;
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (preview && preview.kind === 'line') {
+    polyline(ctx, [preview.start, preview.end]);
+  } else if (preview && preview.kind !== 'none') {
+    shapePath(ctx, { ...preview.bounds, kind: preview.kind } as ShapeElement);
+  } else if (editor.stroke) {
+    polyline(ctx, editor.stroke);
+  } else {
+    return;
+  }
+  ctx.stroke();
+}
+
 /** Полная перерисовка кадра. Рисуются только элементы, попавшие в видимую область. */
 export function renderBoard(
   ctx: CanvasRenderingContext2D,
@@ -187,6 +222,7 @@ export function renderBoard(
   }
 
   drawSelection(ctx, editor, theme);
+  drawStroke(ctx, editor, theme);
 
   if (editor.marquee) {
     const m = editor.marquee;

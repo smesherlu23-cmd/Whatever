@@ -5,6 +5,7 @@ import {
   elementBounds,
   hitTest,
   normalizeBounds,
+  normalizePath,
   resolveArrow,
 } from '../model/geometry';
 import {
@@ -19,8 +20,16 @@ import {
   type ShapeKind,
   isArrow,
 } from '../model/types';
+import { beautifyBounds, straightenLine } from '../recognition/beautify';
+import { type Recognized, recognize } from '../recognition/recognize';
 
-export type Tool = 'select' | 'rectangle' | 'ellipse' | 'diamond' | 'arrow' | 'text';
+export type Tool = 'select' | 'pen' | 'rectangle' | 'ellipse' | 'diamond' | 'arrow' | 'text';
+
+/**
+ * Когда превращать набросок в фигуру: hold — если задержать курсор в конце штриха
+ * (как в Telegram), always — после каждого штриха, off — никогда.
+ */
+export type SmartMode = 'hold' | 'always' | 'off';
 
 export type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -35,8 +44,14 @@ const DEFAULT_SIZE: Record<ShapeKind, { w: number; h: number }> = {
   ellipse: { w: 120, h: 120 },
   diamond: { w: 140, h: 100 },
   text: { w: 160, h: 40 },
+  path: { w: 0, h: 0 },
 };
 const DUPLICATE_OFFSET = 24;
+/** Сколько держать курсор неподвижно в конце штриха, чтобы фигура выровнялась. */
+export const HOLD_MS = 450;
+const HOLD_STILL_PX = 3;
+const SMART_BIND_PX = 24;
+const SMART_ALIGN_PX = 12;
 
 export interface PointerInput {
   button?: number;
@@ -57,10 +72,12 @@ type Interaction =
   | { type: 'resize'; id: string; handle: Handle; start: Bounds; origin: Point }
   | { type: 'create'; id: string; origin: Point }
   | { type: 'arrowEnd'; id: string; which: 'start' | 'end'; created: boolean }
-  | { type: 'marquee'; origin: Point; current: Point; base: Set<string> };
+  | { type: 'marquee'; origin: Point; current: Point; base: Set<string> }
+  | { type: 'draw'; anchor: Point };
 
 export interface EditorState {
   tool: Tool;
+  smartMode: SmartMode;
   selection: ReadonlySet<string>;
   editingId: string | null;
   camera: Camera;
@@ -78,6 +95,11 @@ export class Editor {
   editingId: string | null = null;
   marquee: Bounds | null = null;
   spaceHeld = false;
+  smartMode: SmartMode = 'hold';
+  /** Штрих, который рисуется сейчас (мировые координаты), и его распознанный вид при задержке. */
+  stroke: Point[] | null = null;
+  strokePreview: Recognized | null = null;
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
 
   private interaction: Interaction = { type: 'none' };
   private listeners = new Set<() => void>();
@@ -94,6 +116,7 @@ export class Editor {
   }
 
   destroy(): void {
+    if (this.holdTimer) clearTimeout(this.holdTimer);
     this.unsubscribeDoc();
     this.listeners.clear();
   }
@@ -106,6 +129,7 @@ export class Editor {
   getState(): EditorState {
     return {
       tool: this.tool,
+      smartMode: this.smartMode,
       selection: this.selection,
       editingId: this.editingId,
       camera: this.camera,
@@ -119,6 +143,11 @@ export class Editor {
   private lookup = (id: string) => this.doc.get(id);
 
   // ---------- Инструменты, выделение, камера ----------
+
+  setSmartMode(mode: SmartMode): void {
+    this.smartMode = mode;
+    this.emit();
+  }
 
   setTool(tool: Tool): void {
     this.tool = tool;
@@ -169,7 +198,7 @@ export class Editor {
     const tolerance = this.px(BIND_DISTANCE_PX);
     for (let i = elements.length - 1; i >= 0; i--) {
       const el = elements[i];
-      if (isArrow(el) || el.id === exclude) continue;
+      if (isArrow(el) || el.id === exclude || el.kind === 'path') continue;
       if (hitTest(el, world, this.lookup, tolerance)) return el;
     }
     return undefined;
@@ -233,6 +262,9 @@ export class Editor {
     if (this.editingId) this.stopEditing();
 
     switch (this.tool) {
+      case 'pen':
+        this.beginStroke(world, screen);
+        return;
       case 'rectangle':
       case 'ellipse':
       case 'diamond':
@@ -353,6 +385,16 @@ export class Editor {
         });
         return;
       }
+      case 'draw': {
+        this.stroke?.push(world);
+        if (Math.hypot(screen.x - it.anchor.x, screen.y - it.anchor.y) > HOLD_STILL_PX) {
+          it.anchor = screen;
+          this.strokePreview = null;
+          this.scheduleHold();
+        }
+        this.emit();
+        return;
+      }
       case 'marquee': {
         it.current = world;
         this.marquee = normalizeBounds(it.origin, world);
@@ -373,8 +415,113 @@ export class Editor {
     if (it.type === 'create') this.finishCreate(it.id, it.origin);
     if (it.type === 'arrowEnd' && it.created) this.finishArrow(it.id);
     if (it.type === 'marquee') this.marquee = null;
+    if (it.type === 'draw') this.finishStroke();
     this.doc.stopCapturing();
     this.emit();
+  }
+
+  // ---------- Умное рисование ----------
+
+  private beginStroke(world: Point, screen: Point): void {
+    this.selection = new Set();
+    this.stroke = [world];
+    this.strokePreview = null;
+    this.interaction = { type: 'draw', anchor: screen };
+    this.scheduleHold();
+    this.emit();
+  }
+
+  private scheduleHold(): void {
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    this.holdTimer = null;
+    if (this.smartMode !== 'hold') return;
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null;
+      if (!this.stroke) return;
+      const result = recognize(this.stroke);
+      this.strokePreview = result.kind === 'none' ? null : result;
+      this.emit();
+    }, HOLD_MS);
+  }
+
+  private finishStroke(): void {
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    this.holdTimer = null;
+    const stroke = this.stroke;
+    const preview = this.strokePreview;
+    this.stroke = null;
+    this.strokePreview = null;
+    if (!stroke || stroke.length < 2) return;
+
+    let result: Recognized | null = null;
+    if (this.smartMode === 'hold') result = preview;
+    if (this.smartMode === 'always') result = recognize(stroke);
+
+    // Сначала сохраняем рукописный штрих, потом заменяем его фигурой отдельным шагом:
+    // так одно Ctrl+Z возвращает набросок, а второе убирает его совсем.
+    const pathId = newId();
+    const { bounds, points } = normalizePath(stroke);
+    this.doc.stopCapturing();
+    this.doc.add({
+      id: pathId,
+      kind: 'path',
+      ...bounds,
+      points,
+      text: '',
+      stroke: DEFAULT_STROKE,
+      fill: 'transparent',
+      z: this.doc.nextZ(),
+    });
+    this.doc.stopCapturing();
+    if (result && result.kind !== 'none') this.replaceWithShape(pathId, result);
+  }
+
+  /** Заменяет штрих распознанной фигурой или стрелкой. Возвращает id нового элемента. */
+  private replaceWithShape(pathId: string, result: Exclude<Recognized, { kind: 'none' }>): string | null {
+    const z = this.doc.nextZ();
+    const id = newId();
+    if (result.kind === 'line') {
+      const tolerance = this.px(SMART_BIND_PX);
+      const from = this.bindTargetNear(result.start, tolerance, pathId);
+      const to = this.bindTargetNear(result.end, tolerance, pathId);
+      if (from && to && from.id === to.id) return null;
+      const straight = straightenLine(result.start, result.end);
+      const start: ArrowEnd = from ? { ...result.start, shapeId: from.id } : straight.start;
+      const end: ArrowEnd = to ? { ...result.end, shapeId: to.id } : straight.end;
+      this.doc.transact(() => {
+        this.doc.remove([pathId]);
+        this.doc.add({ id, kind: 'arrow', start, end, stroke: DEFAULT_STROKE, z });
+      });
+    } else {
+      const neighbours = this.doc
+        .list()
+        .filter((el): el is ShapeElement => !isArrow(el) && el.kind !== 'path' && el.kind !== 'text');
+      const bounds = beautifyBounds(result.kind, result.bounds, neighbours, this.px(SMART_ALIGN_PX));
+      this.doc.transact(() => {
+        this.doc.remove([pathId]);
+        this.doc.add({
+          id,
+          kind: result.kind,
+          ...bounds,
+          text: '',
+          stroke: DEFAULT_STROKE,
+          fill: DEFAULT_FILL,
+          z,
+        });
+      });
+    }
+    this.doc.stopCapturing();
+    return id;
+  }
+
+  private bindTargetNear(world: Point, tolerance: number, exclude: string): ShapeElement | undefined {
+    const elements = this.doc.list();
+    for (let i = elements.length - 1; i >= 0; i--) {
+      const el = elements[i];
+      if (isArrow(el) || el.id === exclude || el.kind === 'path') continue;
+      if (hitTest(el, world, this.lookup, tolerance)) return el;
+    }
+    return undefined;
   }
 
   private finishCreate(id: string, origin: Point): void {
@@ -460,7 +607,7 @@ export class Editor {
 
   doubleClick(screen: Point): void {
     const hit = this.elementAt(this.toWorld(screen));
-    if (hit && !isArrow(hit)) {
+    if (hit && !isArrow(hit) && hit.kind !== 'path') {
       this.selection = new Set([hit.id]);
       this.startEditing(hit.id);
     } else if (!hit) {
@@ -572,7 +719,7 @@ export class Editor {
     }
     if (key === 'enter') {
       const el = this.singleSelected();
-      if (el && !isArrow(el)) {
+      if (el && !isArrow(el) && el.kind !== 'path') {
         this.startEditing(el.id);
         return true;
       }
@@ -580,6 +727,7 @@ export class Editor {
     }
     const tools: Record<string, Tool> = {
       KeyV: 'select',
+      KeyP: 'pen',
       KeyR: 'rectangle',
       KeyO: 'ellipse',
       KeyD: 'diamond',

@@ -84,10 +84,45 @@ export function elementBounds(el: BoardElement, lookup: ElementLookup): Bounds {
 }
 
 /** Попадает ли точка в элемент. tolerance задаётся в мировых единицах. */
+/** Точки рукописного штриха в мировых координатах. */
+export function pathPoints(el: ShapeElement): Point[] {
+  const points = el.points ?? [];
+  const result: Point[] = [];
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    result.push({ x: el.x + points[i] * el.w, y: el.y + points[i + 1] * el.h });
+  }
+  return result;
+}
+
+/** Переводит точки штриха в доли рамки, чтобы штрих масштабировался вместе с ней. */
+export function normalizePath(points: Point[]): { bounds: Bounds; points: number[] } {
+  const bounds = normalizeBounds(points[0], points[0]);
+  for (const p of points) {
+    const right = Math.max(bounds.x + bounds.w, p.x);
+    const bottom = Math.max(bounds.y + bounds.h, p.y);
+    bounds.x = Math.min(bounds.x, p.x);
+    bounds.y = Math.min(bounds.y, p.y);
+    bounds.w = right - bounds.x;
+    bounds.h = bottom - bounds.y;
+  }
+  const flat: number[] = [];
+  for (const p of points) {
+    flat.push(bounds.w ? (p.x - bounds.x) / bounds.w : 0, bounds.h ? (p.y - bounds.y) / bounds.h : 0);
+  }
+  return { bounds, points: flat };
+}
+
 export function hitTest(el: BoardElement, p: Point, lookup: ElementLookup, tolerance: number): boolean {
   if (isArrow(el)) {
     const { start, end } = resolveArrow(el, lookup);
     return distanceToSegment(p, start, end) <= tolerance;
+  }
+  if (el.kind === 'path') {
+    const points = pathPoints(el);
+    for (let i = 1; i < points.length; i++) {
+      if (distanceToSegment(p, points[i - 1], points[i]) <= tolerance + 2) return true;
+    }
+    return false;
   }
   const c = center(el);
   const hw = el.w / 2 + tolerance;
