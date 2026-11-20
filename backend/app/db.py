@@ -1,5 +1,7 @@
 from collections.abc import AsyncIterator
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -41,3 +43,6 @@ async def dispose_engine() -> None:
         await _engine.dispose()
     _engine = None
     _sessionmaker = None
+
+
+DbSession = Annotated[AsyncSession, Depends(get_session)]

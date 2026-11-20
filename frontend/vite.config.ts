@@ -4,9 +4,11 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Сервер сверяет Origin с Host, поэтому прокси передаёт Host браузера без изменений,
+    // как nginx в рабочей сборке.
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/ws': { target: 'ws://localhost:8000', ws: true },
+      '/api': { target: 'http://localhost:8000', changeOrigin: false },
+      '/ws': { target: 'ws://localhost:8000', ws: true, changeOrigin: false },
     },
   },
   test: {

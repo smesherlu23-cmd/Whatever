@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api, type BoardInfo } from '../api';
 import { navigate } from '../router';
+import controls from '../ui/controls.module.css';
 import { Link } from '../ui/Link';
+import { AppHeader } from './AppHeader';
 import styles from './pages.module.css';
 
 const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
@@ -46,34 +48,32 @@ export function BoardsPage() {
 
   return (
     <div className={styles.app}>
-      <header className={styles.header}>
-        <span className={styles.logo}>Whatever</span>
-      </header>
+      <AppHeader />
       <main className={styles.page}>
         <div className={styles.listHeader}>
           <h1>Доски</h1>
-          <button type="button" className={styles.primary} onClick={() => void create()}>
+          <button type="button" className={controls.primary} onClick={() => void create()}>
             Создать доску
           </button>
         </div>
         {error && (
-          <p className={styles.muted} role="alert">
+          <p className={controls.error} role="alert">
             {error}
           </p>
         )}
-        {boards?.length === 0 && <p className={styles.muted}>Досок пока нет. Создайте первую.</p>}
+        {boards?.length === 0 && <p className={controls.muted}>Досок пока нет. Создайте первую.</p>}
         <ul className={styles.boards}>
           {boards?.map((board) => (
             <li key={board.id}>
               <Link to={`/b/${board.id}`}>
                 <span className={styles.boardName}>{board.name}</span>
-                <span className={styles.muted}>
+                <span className={controls.muted}>
                   изменена {dateFormat.format(new Date(board.updated_at))}
                 </span>
               </Link>
               <button
                 type="button"
-                className={styles.ghost}
+                className={controls.ghost}
                 aria-label={`Удалить доску ${board.name}`}
                 onClick={() => void remove(board)}
               >

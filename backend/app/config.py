@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://whatever:whatever@localhost:5432/whatever"
     redis_url: str = "redis://localhost:6379/0"
     debug: bool = False
+    # Сколько дней действует вход без повторного ввода пароля. Срок продлевается при работе.
+    session_ttl_days: int = 30
+    # Включите, если приложение открывается по HTTPS: cookie сессии не уйдёт по HTTP.
+    cookie_secure: bool = False
 
 
 @lru_cache

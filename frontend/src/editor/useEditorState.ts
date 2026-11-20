@@ -4,7 +4,7 @@ import type { Editor, EditorState } from './Editor';
 function same(a: EditorState, b: EditorState): boolean {
   return (
     a.tool === b.tool &&
-    a.smartMode === b.smartMode &&
+    a.smartDrawing === b.smartDrawing &&
     a.selection === b.selection &&
     a.editingId === b.editingId &&
     a.camera === b.camera

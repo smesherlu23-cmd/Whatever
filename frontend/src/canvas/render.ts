@@ -1,7 +1,7 @@
 import type { Editor } from '../editor/Editor';
 import { elementBounds, intersects, pathPoints, resolveArrow } from '../model/geometry';
 import type { ArrowElement, Bounds, Point, ShapeElement, ShapeKind } from '../model/types';
-import { isArrow } from '../model/types';
+import { DEFAULT_FILL, DEFAULT_STROKE, isArrow } from '../model/types';
 import type { Peer } from '../collab/presence';
 import { screenToWorld, worldToScreen } from './camera';
 import { drawGrid } from './grid';
@@ -14,6 +14,8 @@ export interface Theme {
   handleFill: string;
   marqueeFill: string;
   ink: string;
+  shapeStroke: string;
+  shapeFill: string;
   /** Семейство шрифта интерфейса: холст должен писать тем же шрифтом, что и разметка. */
   fontFamily: string;
 }
@@ -28,11 +30,23 @@ export function readTheme(el: Element): Theme {
     handleFill: v('--bg-panel'),
     marqueeFill: v('--selection-fill'),
     ink: v('--text'),
+    shapeStroke: v('--shape-stroke'),
+    shapeFill: v('--shape-fill'),
     fontFamily: style.fontFamily,
   };
 }
 
 type OutlineKind = Exclude<ShapeKind, 'path'>;
+
+/**
+ * Цвет на экране. Цвета по умолчанию хранятся в документе одним значением,
+ * а рисуются цветами текущей темы, чтобы фигуры читались и на тёмном фоне.
+ */
+function paint(color: string, theme: Theme): string {
+  if (color === DEFAULT_STROKE) return theme.shapeStroke;
+  if (color === DEFAULT_FILL) return theme.shapeFill;
+  return color;
+}
 
 const ARROW_HEAD = 12;
 const HANDLE_PX = 8;
@@ -81,24 +95,25 @@ function drawShape(
   editing: boolean,
   theme: Theme,
 ): void {
+  const stroke = paint(el.stroke, theme);
   shapePath(ctx, el);
   if (el.kind === 'path') {
-    ctx.strokeStyle = el.stroke;
+    ctx.strokeStyle = stroke;
     ctx.lineWidth = 2;
     ctx.stroke();
     return;
   }
   if (el.kind !== 'text') {
     if (el.fill !== 'transparent') {
-      ctx.fillStyle = el.fill;
+      ctx.fillStyle = paint(el.fill, theme);
       ctx.fill();
     }
-    ctx.strokeStyle = el.stroke;
+    ctx.strokeStyle = stroke;
     ctx.lineWidth = 1.5;
     ctx.stroke();
   }
   if (editing || !el.text) return;
-  ctx.fillStyle = el.stroke;
+  ctx.fillStyle = stroke;
   ctx.font = `${FONT_SIZE}px ${theme.fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -109,11 +124,16 @@ function drawShape(
   });
 }
 
-function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement, editor: Editor): void {
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  el: ArrowElement,
+  editor: Editor,
+  theme: Theme,
+): void {
   const { start, end } = resolveArrow(el, (id) => editor.doc.get(id));
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
-  ctx.strokeStyle = el.stroke;
-  ctx.fillStyle = el.stroke;
+  ctx.strokeStyle = paint(el.stroke, theme);
+  ctx.fillStyle = paint(el.stroke, theme);
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(start.x, start.y);
@@ -169,21 +189,13 @@ function drawSelection(ctx: CanvasRenderingContext2D, editor: Editor, theme: The
   }
 }
 
-/** Штрих, который рисуется прямо сейчас, или фигура, в которую он превратится. */
+/** Штрих, который рисуется прямо сейчас. */
 function drawStroke(ctx: CanvasRenderingContext2D, editor: Editor, theme: Theme): void {
-  const preview = editor.strokePreview;
+  if (!editor.stroke) return;
   ctx.strokeStyle = theme.ink;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  if (preview?.kind === 'line') {
-    polyline(ctx, [preview.start, preview.end]);
-  } else if (preview && preview.kind !== 'none') {
-    outline(ctx, preview.kind, preview.bounds);
-  } else if (editor.stroke) {
-    polyline(ctx, editor.stroke);
-  } else {
-    return;
-  }
+  polyline(ctx, editor.stroke);
   ctx.stroke();
 }
 
@@ -270,7 +282,7 @@ export function renderBoard(
 
   for (const el of editor.doc.list()) {
     if (!intersects(viewport, elementBounds(el, lookup))) continue;
-    if (isArrow(el)) drawArrow(ctx, el, editor);
+    if (isArrow(el)) drawArrow(ctx, el, editor, theme);
     else drawShape(ctx, el, el.id === editor.editingId, theme);
   }
 

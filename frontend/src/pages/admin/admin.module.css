@@ -1,0 +1,119 @@
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+
+.message {
+  margin: 16px 0 0;
+}
+
+.newUser {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.table {
+  width: 100%;
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-spacing: 0;
+  background: var(--bg-panel);
+}
+
+.table th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.table td {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.table tbody tr:first-child td {
+  border-top: 0;
+}
+
+.blocked td {
+  color: var(--text-muted);
+}
+
+.name,
+.role {
+  width: 100%;
+  min-width: 140px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.name:hover,
+.name:focus,
+.role:hover:enabled,
+.role:focus {
+  border-color: var(--border);
+  outline: none;
+}
+
+.role:disabled {
+  appearance: none;
+  color: inherit;
+}
+
+.badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.passwordForm {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.passwordForm label {
+  flex: 1;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -7,11 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
+from app.auth.dependencies import current_user
+from app.db import DbSession
 from app.models import Board
 
-router = APIRouter(prefix="/boards", tags=["boards"])
-Session = Annotated[AsyncSession, Depends(get_session)]
+# Доски доступны только вошедшим пользователям. Права на отдельные доски — следующий этап.
+router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(current_user)])
 
 
 BoardName = Annotated[str, Field(min_length=1, max_length=200)]
@@ -42,13 +43,13 @@ async def _get(session: AsyncSession, board_id: uuid.UUID) -> Board:
 
 
 @router.get("")
-async def list_boards(session: Session) -> list[BoardOut]:
+async def list_boards(session: DbSession) -> list[BoardOut]:
     result = await session.scalars(select(Board).order_by(Board.updated_at.desc()))
     return [BoardOut.model_validate(b) for b in result]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_board(body: BoardCreate, session: Session) -> BoardOut:
+async def create_board(body: BoardCreate, session: DbSession) -> BoardOut:
     now = datetime.now(UTC)
     board = Board(name=body.name, created_at=now, updated_at=now)
     session.add(board)
@@ -57,12 +58,12 @@ async def create_board(body: BoardCreate, session: Session) -> BoardOut:
 
 
 @router.get("/{board_id}")
-async def get_board(board_id: uuid.UUID, session: Session) -> BoardOut:
+async def get_board(board_id: uuid.UUID, session: DbSession) -> BoardOut:
     return BoardOut.model_validate(await _get(session, board_id))
 
 
 @router.patch("/{board_id}")
-async def rename_board(board_id: uuid.UUID, body: BoardRename, session: Session) -> BoardOut:
+async def rename_board(board_id: uuid.UUID, body: BoardRename, session: DbSession) -> BoardOut:
     board = await _get(session, board_id)
     board.name = body.name
     board.updated_at = datetime.now(UTC)
@@ -71,6 +72,6 @@ async def rename_board(board_id: uuid.UUID, body: BoardRename, session: Session)
 
 
 @router.delete("/{board_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_board(board_id: uuid.UUID, session: Session) -> None:
+async def delete_board(board_id: uuid.UUID, session: DbSession) -> None:
     await session.delete(await _get(session, board_id))
     await session.commit()

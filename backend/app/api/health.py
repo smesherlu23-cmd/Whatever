@@ -1,16 +1,13 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
+from app.db import DbSession
 
 router = APIRouter(tags=["service"])
 
 
 @router.get("/health")
-async def health(session: Annotated[AsyncSession, Depends(get_session)]) -> dict[str, str]:
+async def health(session: DbSession) -> dict[str, str]:
     """Проверка, что сервис жив и база данных отвечает."""
     try:
         await session.execute(text("SELECT 1"))

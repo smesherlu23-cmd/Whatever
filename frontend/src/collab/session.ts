@@ -2,14 +2,15 @@ import { IndexeddbPersistence } from 'y-indexeddb';
 import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
-import { syncUrl } from '../api';
+import { reportSignedOut, syncUrl } from '../api';
 import { Editor } from '../editor/Editor';
 import { BoardDocument } from '../model/document';
 import { Presence } from './presence';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'not-found';
 
-/** Код закрытия от сервера: доски с таким id нет. */
+/** Коды закрытия от сервера: сессии больше нет; доски с таким id нет. */
+const SIGNED_OUT = 4401;
 const BOARD_NOT_FOUND = 4404;
 
 /**
@@ -66,6 +67,7 @@ export class BoardSession {
     });
     provider.on('closed', ({ code }) => {
       if (code === BOARD_NOT_FOUND) this.setStatus('not-found');
+      if (code === SIGNED_OUT) reportSignedOut();
     });
 
     return () => {

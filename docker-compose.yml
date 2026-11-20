@@ -22,6 +22,8 @@ services:
     environment:
       WHATEVER_DATABASE_URL: postgresql+asyncpg://whatever:${POSTGRES_PASSWORD:-whatever}@postgres:5432/whatever
       WHATEVER_REDIS_URL: redis://redis:6379/0
+      # true, когда приложение открывают по HTTPS: cookie сессии не уйдёт по открытому каналу.
+      WHATEVER_COOKIE_SECURE: ${WHATEVER_COOKIE_SECURE:-false}
     depends_on:
       postgres:
         condition: service_healthy
