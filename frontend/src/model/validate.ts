@@ -1,4 +1,4 @@
-import type { ArrowEnd, BoardElement, Point, ShapeKind } from './types';
+import { type ArrowEnd, type BoardElement, type Point, SHAPE_KINDS, type ShapeKind } from './types';
 
 /*
  * Проверка данных, пришедших от других участников. Документ доски и присутствие приходят
@@ -7,8 +7,6 @@ import type { ArrowEnd, BoardElement, Point, ShapeKind } from './types';
  */
 
 type Fields = Record<string, unknown>;
-
-const SHAPE_KINDS: readonly ShapeKind[] = ['rectangle', 'ellipse', 'diamond', 'text', 'path'];
 
 export const isRecord = (value: unknown): value is Fields =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -49,8 +47,10 @@ export function parseElement(value: unknown): BoardElement | null {
   const { id, z, stroke } = value;
   if (value.kind === 'arrow') {
     const { start, end } = value;
+    // У стрелок, нарисованных до появления ломаных, поля route нет: они прямые.
+    const route = value.route === 'elbow' ? 'elbow' : 'straight';
     return isArrowEnd(start) && isArrowEnd(end)
-      ? { id, kind: 'arrow', start, end, stroke, z }
+      ? { id, kind: 'arrow', start, end, route, stroke, z }
       : null;
   }
   const { kind, x, y, w, h, text, fill, points } = value;

@@ -11,9 +11,11 @@ import { bindTargetAt, elementAt, hasText } from '../model/queries';
 import {
   type ArrowElement,
   type ArrowEnd,
+  type ArrowRoute,
   type BoardElement,
   type Bounds,
   DEFAULT_FILL,
+  DEFAULT_STICKY_FILL,
   DEFAULT_STROKE,
   type Point,
   type ShapeElement,
@@ -24,7 +26,26 @@ import { recognize } from '../recognition/recognize';
 import { type KeyInput, handleShortcut } from './shortcuts';
 import { commitStroke } from './smartDrawing';
 
-export type Tool = 'select' | 'pen' | 'rectangle' | 'ellipse' | 'diamond' | 'arrow' | 'text';
+/** Фигуры, которые рисуются протягиванием рамки. */
+export type ShapeTool = Exclude<ShapeKind, 'path'>;
+export type Tool = 'select' | 'pen' | 'arrow' | ShapeTool;
+
+const SHAPE_TOOLS: ReadonlySet<Tool> = new Set<ShapeTool>([
+  'rectangle',
+  'rounded',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'sticky',
+  'text',
+]);
+
+function isShapeTool(tool: Tool): tool is ShapeTool {
+  return SHAPE_TOOLS.has(tool);
+}
+
+/** Вид линий выделенных стрелок: один на всех, «разный» или null, если стрелок не выделено. */
+export type SelectionRoute = ArrowRoute | 'mixed' | null;
 
 export type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -36,10 +57,17 @@ const BIND_DISTANCE_PX = 12;
 const MIN_SIZE = 8;
 const DEFAULT_SIZE: Record<ShapeKind, { w: number; h: number }> = {
   rectangle: { w: 160, h: 80 },
+  rounded: { w: 160, h: 80 },
   ellipse: { w: 120, h: 120 },
   diamond: { w: 140, h: 100 },
+  triangle: { w: 140, h: 120 },
+  sticky: { w: 160, h: 160 },
   text: { w: 160, h: 40 },
   path: { w: 0, h: 0 },
+};
+const DEFAULT_FILLS: Partial<Record<ShapeKind, string>> = {
+  text: 'transparent',
+  sticky: DEFAULT_STICKY_FILL,
 };
 const DUPLICATE_OFFSET = 24;
 
@@ -61,6 +89,9 @@ type Interaction =
 export interface EditorState {
   tool: Tool;
   smartDrawing: boolean;
+  /** Вид линии для новых стрелок. */
+  arrowRoute: ArrowRoute;
+  selectionRoute: SelectionRoute;
   selection: ReadonlySet<string>;
   editingId: string | null;
   camera: Camera;
@@ -81,6 +112,7 @@ export class Editor {
   spaceHeld = false;
   /** Умное рисование: каждый штрих превращается в ровную фигуру, если он на неё похож. */
   smartDrawing = true;
+  arrowRoute: ArrowRoute = 'straight';
   /** Штрих, который рисуется сейчас, в мировых координатах. */
   stroke: Point[] | null = null;
 
@@ -114,6 +146,8 @@ export class Editor {
     return {
       tool: this.tool,
       smartDrawing: this.smartDrawing,
+      arrowRoute: this.arrowRoute,
+      selectionRoute: this.selectionRoute(),
       selection: this.selection,
       editingId: this.editingId,
       camera: this.camera,
@@ -140,6 +174,31 @@ export class Editor {
 
   setSmartDrawing(enabled: boolean): void {
     this.smartDrawing = enabled;
+    this.emit();
+  }
+
+  private selectedArrows(): ArrowElement[] {
+    return [...this.selection].map((id) => this.arrow(id)).filter((el) => el !== undefined);
+  }
+
+  selectionRoute(): SelectionRoute {
+    const routes = new Set(this.selectedArrows().map((arrow) => arrow.route));
+    if (routes.size === 0) return null;
+    const [only] = routes;
+    return routes.size === 1 && only ? only : 'mixed';
+  }
+
+  /** Вид линии для новых стрелок и для выделенных: меняются одним шагом отмены. */
+  setArrowRoute(route: ArrowRoute): void {
+    this.arrowRoute = route;
+    const arrows = this.selectedArrows().filter((arrow) => arrow.route !== route);
+    if (arrows.length > 0) {
+      this.doc.stopCapturing();
+      this.doc.transact(() => {
+        for (const arrow of arrows) this.doc.update(arrow.id, { route });
+      });
+      this.doc.stopCapturing();
+    }
     this.emit();
   }
 
@@ -242,22 +301,11 @@ export class Editor {
     if (button !== 0) return;
     if (this.editingId) this.stopEditing();
 
-    switch (this.tool) {
-      case 'pen':
-        this.beginStroke(world);
-        return;
-      case 'rectangle':
-      case 'ellipse':
-      case 'diamond':
-      case 'text':
-        this.beginCreate(this.tool, world);
-        return;
-      case 'arrow':
-        this.beginArrow(world);
-        return;
-      case 'select':
-        this.beginSelect(world, input.shift ?? false);
-    }
+    const { tool } = this;
+    if (tool === 'pen') this.beginStroke(world);
+    else if (tool === 'arrow') this.beginArrow(world);
+    else if (tool === 'select') this.beginSelect(world, input.shift ?? false);
+    else if (isShapeTool(tool)) this.beginCreate(tool, world);
   }
 
   private beginCreate(kind: ShapeKind, world: Point): void {
@@ -271,7 +319,7 @@ export class Editor {
       h: 0,
       text: '',
       stroke: DEFAULT_STROKE,
-      fill: kind === 'text' ? 'transparent' : DEFAULT_FILL,
+      fill: DEFAULT_FILLS[kind] ?? DEFAULT_FILL,
       z: this.doc.nextZ(),
     });
     this.selection = new Set([id]);
@@ -288,6 +336,7 @@ export class Editor {
       kind: 'arrow',
       start,
       end: { x: world.x, y: world.y },
+      route: this.arrowRoute,
       stroke: DEFAULT_STROKE,
       z: this.doc.nextZ(),
     });

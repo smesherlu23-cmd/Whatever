@@ -1,0 +1,38 @@
+import type { ReactNode } from 'react';
+import type { Tool } from '../editor/Editor';
+
+export type IconName = Tool | 'undo' | 'redo';
+
+/** Контуры иконок в квадрате 20×20. Рисуются линией цвета текста. */
+const ICONS: Record<IconName, ReactNode> = {
+  select: <path d="M5 3l10 6.5-4.5 1.2L13 16l-2 1-2.6-5.3L5 14.5z" />,
+  pen: <path d="M3.5 16.5l1-4 9-9 3 3-9 9zM12 5l3 3" />,
+  rectangle: <rect x="3" y="5" width="14" height="10" rx="1" />,
+  rounded: <rect x="3" y="5" width="14" height="10" rx="4" />,
+  ellipse: <ellipse cx="10" cy="10" rx="7" ry="6" />,
+  diamond: <path d="M10 3l7 7-7 7-7-7z" />,
+  triangle: <path d="M10 3.5l7 13H3z" />,
+  sticky: <path d="M4 4h12v8l-4 4H4zM16 12h-4v4" />,
+  arrow: <path d="M4 16L16 4M9 4h7v7" />,
+  text: <path d="M5 5h10M10 5v11M7.5 16h5" />,
+  undo: <path d="M7.5 5L4 8.5 7.5 12M4 8.5h8a4 4 0 010 8H9" />,
+  redo: <path d="M12.5 5L16 8.5 12.5 12M16 8.5H8a4 4 0 000 8h3" />,
+};
+
+export function ToolIcon({ name }: { name: IconName }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {ICONS[name]}
+    </svg>
+  );
+}

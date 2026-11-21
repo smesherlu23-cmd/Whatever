@@ -18,6 +18,14 @@ describe('keyboard shortcuts', () => {
     expect(editor.keyDown({ key: 'з', code: 'KeyP' })).toBe(true);
     expect(editor.tool).toBe('pen');
     expect(editor.keyDown({ key: 'q', code: 'KeyQ' })).toBe(false);
+    for (const [code, tool] of [
+      ['KeyU', 'rounded'],
+      ['KeyY', 'triangle'],
+      ['KeyS', 'sticky'],
+    ] as const) {
+      editor.keyDown({ key: '', code });
+      expect(editor.tool).toBe(tool);
+    }
   });
 
   it('undoes in the Russian layout and redoes with Shift', () => {

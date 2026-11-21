@@ -27,10 +27,27 @@ describe('parseElement', () => {
       kind: 'arrow',
       start: { x: 0, y: 0, shapeId: 'r1' },
       end: { x: 10, y: 10 },
+      route: 'elbow',
       stroke: '#000',
       z: 2,
     };
     expect(parseElement(arrow)).toEqual(arrow);
+    for (const kind of ['rounded', 'triangle', 'sticky']) {
+      expect(parseElement({ ...rectangle, kind })).toMatchObject({ kind });
+    }
+  });
+
+  it('reads arrows without a line kind, or with an unknown one, as straight', () => {
+    const arrow = {
+      id: 'a1',
+      kind: 'arrow',
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      stroke: '#000',
+      z: 2,
+    };
+    expect(parseElement(arrow)).toMatchObject({ route: 'straight' });
+    expect(parseElement({ ...arrow, route: 'curved' })).toMatchObject({ route: 'straight' });
   });
 
   it.each([

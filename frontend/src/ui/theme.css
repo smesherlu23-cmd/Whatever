@@ -27,6 +27,7 @@
   /* Цвета фигур по умолчанию. В документе хранится один цвет, а на экране он свой в каждой теме. */
   --shape-stroke: var(--gray-700);
   --shape-fill: var(--gray-0);
+  --sticky-fill: #fbe9a0;
   --danger: #b42318;
   --warning: #b5562d;
 
@@ -52,6 +53,7 @@
   --selection-fill: rgb(222 222 226 / 0.08);
   --shape-stroke: var(--gray-200);
   --shape-fill: var(--gray-800);
+  --sticky-fill: #5b5131;
   --danger: #f97066;
   --warning: #f0a35e;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 8px rgb(0 0 0 / 0.3);
