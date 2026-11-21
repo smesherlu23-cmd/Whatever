@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
+import { DEFAULT_STICKY_FILL } from '../model/types';
 import { Editor } from './Editor';
 
 function drag(editor: Editor, from: [number, number], to: [number, number], shift = false) {
@@ -26,6 +27,49 @@ describe('Editor', () => {
     editor.pointerDown({ x: 200, y: 200 });
     editor.pointerUp();
     expect(shapes(editor.doc)[0]).toMatchObject({ x: 140, y: 140, w: 120, h: 120 });
+  });
+
+  it('creates the new shapes with their own defaults', () => {
+    const editor = new Editor();
+    for (const [tool, x] of [
+      ['rounded', 0],
+      ['triangle', 300],
+      ['sticky', 600],
+    ] as const) {
+      editor.setTool(tool);
+      editor.pointerDown({ x, y: 0 });
+      editor.pointerUp();
+    }
+    const [rounded, triangle, sticky] = shapes(editor.doc);
+    expect(rounded).toMatchObject({ kind: 'rounded', w: 160, h: 80 });
+    expect(triangle).toMatchObject({ kind: 'triangle', w: 140, h: 120 });
+    expect(sticky).toMatchObject({ kind: 'sticky', w: 160, h: 160, fill: DEFAULT_STICKY_FILL });
+  });
+
+  it('draws elbow arrows and switches selected arrows in one undo step', () => {
+    const editor = new Editor();
+    editor.setArrowRoute('elbow');
+    editor.setTool('arrow');
+    drag(editor, [0, 0], [200, 100]);
+    // Новая стрелка остаётся выделенной: снимаем выделение, чтобы не переключить и её.
+    editor.select([]);
+    editor.setArrowRoute('straight');
+    editor.setTool('arrow');
+    drag(editor, [0, 300], [200, 400]);
+    const [elbow, straight] = takeTwo(arrows(editor.doc));
+    expect(elbow.route).toBe('elbow');
+    expect(straight.route).toBe('straight');
+
+    editor.select([elbow.id, straight.id]);
+    expect(editor.getState().selectionRoute).toBe('mixed');
+    editor.setArrowRoute('elbow');
+    expect(arrows(editor.doc).map((a) => a.route)).toEqual(['elbow', 'elbow']);
+    expect(editor.getState().selectionRoute).toBe('elbow');
+    editor.undo();
+    expect(arrows(editor.doc).map((a) => a.route)).toEqual(['elbow', 'straight']);
+
+    editor.select([]);
+    expect(editor.getState().selectionRoute).toBeNull();
   });
 
   it('moves the selection and undoes the whole drag in one step', () => {

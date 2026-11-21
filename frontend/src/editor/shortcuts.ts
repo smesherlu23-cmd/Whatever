@@ -15,8 +15,11 @@ const TOOL_KEYS: Partial<Record<string, Tool>> = {
   KeyV: 'select',
   KeyP: 'pen',
   KeyR: 'rectangle',
+  KeyU: 'rounded',
   KeyO: 'ellipse',
   KeyD: 'diamond',
+  KeyY: 'triangle',
+  KeyS: 'sticky',
   KeyA: 'arrow',
   KeyT: 'text',
 };

@@ -42,5 +42,19 @@ describe('App', () => {
     const rectangle = screen.getByRole('button', { name: 'Прямоугольник' });
     fireEvent.click(rectangle);
     expect(rectangle.getAttribute('aria-pressed')).toBe('true');
+    expect(rectangle.getAttribute('title')).toBe('Прямоугольник (R)');
+  });
+
+  it('offers the arrow line kind while the arrow tool is active', () => {
+    const editor = new Editor();
+    render(<BoardView editor={editor} header={null} />);
+    expect(screen.queryByRole('group', { name: 'Линия стрелки' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Стрелка' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ломаная' }));
+    expect(editor.arrowRoute).toBe('elbow');
+    expect(screen.getByRole('button', { name: 'Ломаная' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
   });
 });
