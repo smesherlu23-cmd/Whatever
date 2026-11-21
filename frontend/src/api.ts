@@ -1,8 +1,54 @@
+/** Что пользователь может делать с доской. Каждый уровень включает предыдущие. */
+export type Access = 'view' | 'edit' | 'manage';
+
+/** Право участника доски: выдаёт владелец или ссылка доступа. */
+export type BoardRole = 'viewer' | 'editor';
+
+export const canEdit = (access: Access): boolean => access !== 'view';
+export const canManage = (access: Access): boolean => access === 'manage';
+
+/** Пользователь глазами коллег: владелец доски, участник, кандидат в участники. */
+export interface Person {
+  id: string;
+  login: string;
+  name: string;
+}
+
 export interface BoardInfo {
   id: string;
   name: string;
+  owner: Person | null;
+  /** Папка в списке владельца; у чужих досок всегда null. */
+  folder_id: string | null;
+  access: Access;
   created_at: string;
   updated_at: string;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+}
+
+export interface Member {
+  user: Person;
+  role: BoardRole;
+}
+
+export interface ShareLink {
+  token: string;
+  role: BoardRole;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/** Кто имеет доступ к доске. Видно только тем, кто ею управляет. */
+export interface BoardAccess {
+  owner: Person | null;
+  members: Member[];
+  links: ShareLink[];
 }
 
 export type Role = 'admin' | 'user';
@@ -66,7 +112,7 @@ export function reportSignedOut(): void {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** Ответ 401 здесь ожидаем (неверный пароль, вход ещё не выполнен) и не означает потерю входа. */
   signIn?: boolean;
@@ -120,12 +166,44 @@ export const api = {
       body: { current_password: currentPassword, new_password: newPassword },
     }),
 
+  /** Свои доски и те, к которым дали доступ. */
   listBoards: () => sendJson<BoardInfo[]>('/boards'),
+  /** Все доски сервера, только для администратора. */
+  listAllBoards: () => sendJson<BoardInfo[]>('/boards?all=true'),
   getBoard: (id: string) => sendJson<BoardInfo>(`/boards/${id}`),
-  createBoard: (name: string) => sendJson<BoardInfo>('/boards', { method: 'POST', body: { name } }),
+  createBoard: (name: string, folderId: string | null = null) =>
+    sendJson<BoardInfo>('/boards', { method: 'POST', body: { name, folder_id: folderId } }),
   renameBoard: (id: string, name: string) =>
     sendJson<BoardInfo>(`/boards/${id}`, { method: 'PATCH', body: { name } }),
+  /** null переносит доску из папки в корень. */
+  moveBoard: (id: string, folderId: string | null) =>
+    sendJson<BoardInfo>(`/boards/${id}`, { method: 'PATCH', body: { folder_id: folderId } }),
   deleteBoard: (id: string) => sendEmpty(`/boards/${id}`, { method: 'DELETE' }),
+
+  listFolders: () => sendJson<Folder[]>('/folders'),
+  createFolder: (name: string, parentId: string | null) =>
+    sendJson<Folder>('/folders', { method: 'POST', body: { name, parent_id: parentId } }),
+  renameFolder: (id: string, name: string) =>
+    sendJson<Folder>(`/folders/${id}`, { method: 'PATCH', body: { name } }),
+  /** Доски и вложенные папки поднимаются на уровень выше. */
+  deleteFolder: (id: string) => sendEmpty(`/folders/${id}`, { method: 'DELETE' }),
+
+  getAccess: (boardId: string) => sendJson<BoardAccess>(`/boards/${boardId}/access`),
+  setMember: (boardId: string, userId: string, role: BoardRole) =>
+    sendJson<Member>(`/boards/${boardId}/members/${userId}`, { method: 'PUT', body: { role } }),
+  removeMember: (boardId: string, userId: string) =>
+    sendEmpty(`/boards/${boardId}/members/${userId}`, { method: 'DELETE' }),
+  createLink: (boardId: string, role: BoardRole, expiresInDays: number | null) =>
+    sendJson<ShareLink>(`/boards/${boardId}/links`, {
+      method: 'POST',
+      body: { role, expires_in_days: expiresInDays },
+    }),
+  deleteLink: (boardId: string, token: string) =>
+    sendEmpty(`/boards/${boardId}/links/${token}`, { method: 'DELETE' }),
+  /** Выдаёт доступ по ссылке и возвращает доску. */
+  joinLink: (token: string) => sendJson<BoardInfo>(`/links/${token}/join`, { method: 'POST' }),
+  /** Активные пользователи, с которыми можно поделиться доской. */
+  listPeople: () => sendJson<Person[]>('/users'),
 
   listUsers: () => sendJson<User[]>('/admin/users'),
   createUser: (user: NewUser) => sendJson<User>('/admin/users', { method: 'POST', body: user }),
@@ -137,4 +215,9 @@ export const api = {
 export function syncUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws/boards`;
+}
+
+/** Ссылка доступа, которую можно отправить коллеге. */
+export function shareUrl(token: string): string {
+  return `${window.location.origin}/s/${token}`;
 }

@@ -6,8 +6,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from pycrdt import Doc, Map, create_update_message
-from sqlalchemy import func, select
+from pycrdt import Doc, Map, create_sync_message, create_update_message
+from sqlalchemy import delete, func, select
 
 from app.db import dispose_engine, session_factory
 from app.models import Board, BoardUpdate
@@ -157,4 +157,40 @@ async def test_a_new_participant_receives_the_document_state() -> None:
             assert len(room.connections) == 2
             assert second.messages, "the server sends sync step 1 first"
         assert rooms.open_rooms() == 1
+    assert rooms.open_rooms() == 0
+
+
+async def test_read_only_connection_cannot_change_the_document() -> None:
+    board_id = await new_board()
+    editor, viewer_inbox, other_inbox = Editor(), Recorder(), Recorder()
+    rooms = RoomManager(session_factory)
+    viewer = Connection(viewer_inbox.send, can_edit=False)
+    async with (
+        rooms.connect(board_id, Connection(other_inbox.send)),
+        rooms.connect(board_id, viewer) as room,
+    ):
+        other_inbox.messages.clear()
+        await room.receive(viewer, create_update_message(editor.set("shape", 1)))
+        assert room.doc.get("elements", type=Map).to_py() == {}
+        assert other_inbox.messages == []
+        # На запрос недостающего (шаг 1) зритель ответ получает.
+        viewer_inbox.messages.clear()
+        await room.receive(viewer, create_sync_message(editor.doc))
+        assert viewer_inbox.messages
+    assert await stored_updates(board_id) == 0
+
+
+async def test_discarded_room_does_not_write_to_a_deleted_board() -> None:
+    board_id = await new_board()
+    editor = Editor()
+    rooms = RoomManager(session_factory)
+    async with rooms.connect(board_id, Connection(Recorder().send)) as room:
+        conn = next(iter(room.connections))
+        await room.receive(conn, create_update_message(editor.set("shape", 1)))
+        async with session_factory()() as session:
+            await session.execute(delete(Board).where(Board.id == board_id))
+            await session.commit()
+        # Без discard закрытие комнаты попыталось бы записать изменение и упало бы
+        # на внешнем ключе удалённой доски.
+        rooms.discard(board_id)
     assert rooms.open_rooms() == 0

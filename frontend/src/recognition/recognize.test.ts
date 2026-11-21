@@ -69,6 +69,17 @@ describe('recognize', () => {
     expect(recognize(jitter(diamond, 2)).kind).toBe('diamond');
   });
 
+  it('recognizes a triangle', () => {
+    const triangle = polyline([
+      { x: 100, y: 0 },
+      { x: 200, y: 160 },
+      { x: 2, y: 156 },
+      { x: 96, y: 6 },
+    ]);
+    const result = recognize(jitter(triangle, 2));
+    expect(result.kind).toBe('triangle');
+  });
+
   it('recognizes a straight line', () => {
     const line = polyline([
       { x: 0, y: 0 },

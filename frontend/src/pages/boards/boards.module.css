@@ -1,0 +1,90 @@
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab[aria-current='page'] {
+  border-bottom-color: var(--text);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.breadcrumbs a {
+  color: var(--text-muted);
+}
+
+.breadcrumbs a::after {
+  margin-left: 6px;
+  color: var(--text-muted);
+  content: '/';
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.nameForm {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.nameForm input {
+  flex: 1;
+  min-width: 0;
+}
+
+.move {
+  max-width: 180px;
+  margin-right: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+/* Значок папки нарисован рамками, чтобы следовать цвету темы без отдельных картинок. */
+.folderIcon {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 12px;
+  margin-right: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.folderIcon::before {
+  position: absolute;
+  top: -4px;
+  left: -1.5px;
+  width: 7px;
+  height: 3px;
+  border: 1.5px solid currentColor;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  content: '';
+}

@@ -71,7 +71,7 @@ function toElement(
     const straight = straightenLine(result.start, result.end);
     const start: ArrowEnd = from ? { ...result.start, shapeId: from.id } : straight.start;
     const end: ArrowEnd = to ? { ...result.end, shapeId: to.id } : straight.end;
-    return { id, kind: 'arrow', start, end, stroke: DEFAULT_STROKE, z };
+    return { id, kind: 'arrow', start, end, route: 'straight', stroke: DEFAULT_STROKE, z };
   }
 
   const neighbours = doc

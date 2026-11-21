@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { worldToScreen } from '../canvas/camera';
-import { FONT_SIZE, LINE_HEIGHT } from '../canvas/textLayout';
+import { FONT_SIZE, LINE_HEIGHT, textBox } from '../canvas/textLayout';
 import { DEFAULT_STROKE, isArrow } from '../model/types';
 import type { Editor } from './Editor';
 import styles from './TextEditor.module.css';
@@ -18,7 +18,8 @@ export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
 
   if (!element || isArrow(element)) return null;
   const { zoom } = editor.camera;
-  const topLeft = worldToScreen(editor.camera, { x: element.x, y: element.y });
+  const box = textBox(element);
+  const topLeft = worldToScreen(editor.camera, { x: box.x, y: box.y });
 
   const finish = () => {
     editor.stopEditing();
@@ -33,14 +34,14 @@ export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
       style={{
         left: topLeft.x,
         top: topLeft.y,
-        width: element.w * zoom,
-        height: element.h * zoom,
+        width: box.w * zoom,
+        height: box.h * zoom,
         fontSize: FONT_SIZE * zoom,
         lineHeight: `${LINE_HEIGHT * zoom}px`,
         // Текст по вертикали по центру, как на холсте.
         paddingTop: Math.max(
           0,
-          (element.h - LINE_HEIGHT * Math.max(1, value.split('\n').length)) * zoom * 0.5,
+          (box.h - LINE_HEIGHT * Math.max(1, value.split('\n').length)) * zoom * 0.5,
         ),
         // Цвет по умолчанию берётся из темы, как на холсте.
         color: element.stroke === DEFAULT_STROKE ? 'var(--shape-stroke)' : element.stroke,

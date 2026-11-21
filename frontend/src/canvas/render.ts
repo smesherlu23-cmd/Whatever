@@ -1,11 +1,19 @@
 import type { Editor } from '../editor/Editor';
-import { elementBounds, intersects, pathPoints, resolveArrow } from '../model/geometry';
+import {
+  arrowPath,
+  elementBounds,
+  intersects,
+  pathPoints,
+  pathVertices,
+  resolveArrow,
+  trianglePoints,
+} from '../model/geometry';
 import type { ArrowElement, Bounds, Point, ShapeElement, ShapeKind } from '../model/types';
-import { DEFAULT_FILL, DEFAULT_STROKE, isArrow } from '../model/types';
+import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE, isArrow } from '../model/types';
 import type { Peer } from '../collab/presence';
 import { screenToWorld, worldToScreen } from './camera';
 import { drawGrid } from './grid';
-import { FONT_SIZE, LINE_HEIGHT, TEXT_PADDING, wrapText } from './textLayout';
+import { FONT_SIZE, LINE_HEIGHT, TEXT_PADDING, textBox, wrapText } from './textLayout';
 
 export interface Theme {
   background: string;
@@ -16,6 +24,7 @@ export interface Theme {
   ink: string;
   shapeStroke: string;
   shapeFill: string;
+  stickyFill: string;
   /** Семейство шрифта интерфейса: холст должен писать тем же шрифтом, что и разметка. */
   fontFamily: string;
 }
@@ -32,6 +41,7 @@ export function readTheme(el: Element): Theme {
     ink: v('--text'),
     shapeStroke: v('--shape-stroke'),
     shapeFill: v('--shape-fill'),
+    stickyFill: v('--sticky-fill'),
     fontFamily: style.fontFamily,
   };
 }
@@ -45,12 +55,15 @@ type OutlineKind = Exclude<ShapeKind, 'path'>;
 function paint(color: string, theme: Theme): string {
   if (color === DEFAULT_STROKE) return theme.shapeStroke;
   if (color === DEFAULT_FILL) return theme.shapeFill;
+  if (color === DEFAULT_STICKY_FILL) return theme.stickyFill;
   return color;
 }
 
 const ARROW_HEAD = 12;
 const HANDLE_PX = 8;
-const CORNER_RADIUS = 8;
+const CORNER_RADIUS = 3;
+const ROUNDED_RADIUS = 20;
+const STICKY_RADIUS = 2;
 const PEER_LABEL_FONT_SIZE = 12;
 
 /** Контур замкнутой фигуры в рамке bounds. Добавляется к текущему пути холста. */
@@ -67,8 +80,18 @@ function outline(ctx: CanvasRenderingContext2D, kind: OutlineKind, bounds: Bound
       ctx.lineTo(x, y + h / 2);
       ctx.closePath();
       break;
+    case 'triangle':
+      polyline(ctx, trianglePoints(bounds));
+      ctx.closePath();
+      break;
     case 'rectangle':
       ctx.roundRect(x, y, w, h, Math.min(CORNER_RADIUS, w / 4, h / 4));
+      break;
+    case 'rounded':
+      ctx.roundRect(x, y, w, h, Math.min(ROUNDED_RADIUS, w / 3, h / 3));
+      break;
+    case 'sticky':
+      ctx.roundRect(x, y, w, h, STICKY_RADIUS);
       break;
     case 'text':
       ctx.rect(x, y, w, h);
@@ -103,7 +126,16 @@ function drawShape(
     ctx.stroke();
     return;
   }
-  if (el.kind !== 'text') {
+  if (el.kind === 'sticky') {
+    // Стикер без рамки: от фона его отделяет тень, как у листка бумаги.
+    ctx.save();
+    ctx.shadowColor = 'rgb(0 0 0 / 0.18)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = paint(el.fill, theme);
+    ctx.fill();
+    ctx.restore();
+  } else if (el.kind !== 'text') {
     if (el.fill !== 'transparent') {
       ctx.fillStyle = paint(el.fill, theme);
       ctx.fill();
@@ -117,10 +149,11 @@ function drawShape(
   ctx.font = `${FONT_SIZE}px ${theme.fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const lines = wrapText((t) => ctx.measureText(t).width, el.text, el.w - TEXT_PADDING * 2);
-  const top = el.y + el.h / 2 - ((lines.length - 1) * LINE_HEIGHT) / 2;
+  const box = textBox(el);
+  const lines = wrapText((t) => ctx.measureText(t).width, el.text, box.w - TEXT_PADDING * 2);
+  const top = box.y + box.h / 2 - ((lines.length - 1) * LINE_HEIGHT) / 2;
   lines.forEach((line, i) => {
-    ctx.fillText(line, el.x + el.w / 2, top + i * LINE_HEIGHT);
+    ctx.fillText(line, box.x + box.w / 2, top + i * LINE_HEIGHT);
   });
 }
 
@@ -130,17 +163,24 @@ function drawArrow(
   editor: Editor,
   theme: Theme,
 ): void {
-  const { start, end } = resolveArrow(el, (id) => editor.doc.get(id));
-  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const path = arrowPath(el, (id) => editor.doc.get(id));
+  const vertices = pathVertices(path);
+  const { end } = path;
+  // Наконечник смотрит вдоль последнего участка ненулевой длины.
+  const before = [...vertices].reverse().find((p) => p.x !== end.x || p.y !== end.y);
+  if (!before) return;
+  const angle = Math.atan2(end.y - before.y, end.x - before.x);
   ctx.strokeStyle = paint(el.stroke, theme);
   ctx.fillStyle = paint(el.stroke, theme);
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(start.x, start.y);
-  ctx.lineTo(
-    end.x - Math.cos(angle) * ARROW_HEAD * 0.8,
-    end.y - Math.sin(angle) * ARROW_HEAD * 0.8,
-  );
+  polyline(ctx, [
+    ...vertices.slice(0, -1),
+    {
+      x: end.x - Math.cos(angle) * ARROW_HEAD * 0.8,
+      y: end.y - Math.sin(angle) * ARROW_HEAD * 0.8,
+    },
+  ]);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(end.x, end.y);
@@ -177,9 +217,9 @@ function drawSelection(ctx: CanvasRenderingContext2D, editor: Editor, theme: The
     ctx.strokeRect(point.x - size / 2, point.y - size / 2, size, size);
   }
 
-  const single = editor.singleSelected();
-  if (single && isArrow(single)) {
-    const { start, end } = resolveArrow(single, lookup);
+  const arrow = editor.selectedArrow();
+  if (arrow) {
+    const { start, end } = resolveArrow(arrow, lookup);
     for (const p of [start, end]) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, size / 2 + 1 / zoom, 0, Math.PI * 2);

@@ -1,12 +1,20 @@
-import { boundsOf, distance, segments } from '../model/geometry';
+import { boundsOf, distance, distanceToSegment, segments } from '../model/geometry';
 import type { Bounds, Point } from '../model/types';
 
 export type Recognized =
-  | { kind: 'rectangle' | 'ellipse' | 'diamond'; bounds: Bounds; error: number }
+  | { kind: ClosedKind; bounds: Bounds; error: number }
   | { kind: 'line'; start: Point; end: Point; error: number }
   | { kind: 'none' };
 
-type ClosedKind = 'rectangle' | 'ellipse' | 'diamond';
+type ClosedKind = 'rectangle' | 'ellipse' | 'diamond' | 'triangle';
+const CLOSED_KINDS: readonly ClosedKind[] = ['rectangle', 'ellipse', 'diamond', 'triangle'];
+
+/** Треугольник вершиной вверх в квадрате [-1, 1] × [-1, 1]. */
+const UNIT_TRIANGLE = [
+  { x: 0, y: -1 },
+  { x: 1, y: 1 },
+  { x: -1, y: 1 },
+] as const;
 
 /** Порог средней ошибки подгонки: выше него штрих остаётся рукописным. */
 export const MAX_SHAPE_ERROR = 0.12;
@@ -96,6 +104,16 @@ function fitError(kind: ClosedKind, points: readonly Point[], b: Bounds): number
       case 'rectangle':
         sum += Math.min(1 - Math.abs(nx), 1 - Math.abs(ny));
         break;
+      case 'triangle': {
+        const [top, right, left] = UNIT_TRIANGLE;
+        const p = { x: nx, y: ny };
+        sum += Math.min(
+          distanceToSegment(p, top, right),
+          distanceToSegment(p, right, left),
+          distanceToSegment(p, left, top),
+        );
+        break;
+      }
     }
   }
   return sum / points.length;
@@ -111,7 +129,7 @@ function recognizeLine(points: readonly Point[], start: Point, end: Point): Reco
 }
 
 /**
- * Распознаёт штрих: прямая (станет стрелкой), прямоугольник, эллипс, ромб
+ * Распознаёт штрих: прямая (станет стрелкой), прямоугольник, эллипс, ромб, треугольник
  * или «не распознано», если ни одна фигура не подходит достаточно хорошо.
  */
 export function recognize(raw: readonly Point[]): Recognized {
@@ -132,7 +150,7 @@ export function recognize(raw: readonly Point[]): Recognized {
   if (!closed || bounds.w < MIN_SIZE || bounds.h < MIN_SIZE) return { kind: 'none' };
 
   let best: { kind: ClosedKind; error: number } = { kind: 'rectangle', error: Infinity };
-  for (const kind of ['rectangle', 'ellipse', 'diamond'] as const) {
+  for (const kind of CLOSED_KINDS) {
     const error = fitError(kind, points, bounds);
     if (error < best.error) best = { kind, error };
   }

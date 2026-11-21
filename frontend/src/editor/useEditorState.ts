@@ -3,8 +3,11 @@ import type { Editor, EditorState } from './Editor';
 
 function same(a: EditorState, b: EditorState): boolean {
   return (
+    a.readOnly === b.readOnly &&
     a.tool === b.tool &&
     a.smartDrawing === b.smartDrawing &&
+    a.arrowRoute === b.arrowRoute &&
+    a.selectionRoute === b.selectionRoute &&
     a.selection === b.selection &&
     a.editingId === b.editingId &&
     a.camera === b.camera

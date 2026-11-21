@@ -7,11 +7,17 @@ import { Editor } from '../editor/Editor';
 import { BoardDocument } from '../model/document';
 import { Presence } from './presence';
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'not-found';
+export type ConnectionStatus =
+  'connecting' | 'connected' | 'disconnected' | 'not-found' | 'forbidden';
 
-/** Коды закрытия от сервера: сессии больше нет; доски с таким id нет. */
+/** Коды закрытия от сервера. Те, что от 4400 до 4499, окончательные: клиент не переподключается. */
 const SIGNED_OUT = 4401;
+const FORBIDDEN = 4403;
 const BOARD_NOT_FOUND = 4404;
+/** Права на доску изменились: клиент переподключится, и сервер проверит их заново. */
+const ACCESS_CHANGED = 4100;
+
+const isFinal = (status: ConnectionStatus) => status === 'not-found' || status === 'forbidden';
 
 /**
  * Открытая доска: документ, редактор, присутствие участников и их связь с внешним миром.
@@ -59,15 +65,31 @@ export class BoardSession {
 
     // Коды закрытия 4400–4499 y-websocket считает окончательными и больше не переподключается.
     const provider = new WebsocketProvider(syncUrl(), this.boardId, this.doc, { awareness });
+    // Переподключение после смены прав — не обрыв связи, «нет связи» тут не показывается.
+    let recheckingAccess = false;
+    provider.on('connection-close', (event) => {
+      recheckingAccess = event?.code === ACCESS_CHANGED;
+    });
     provider.on('status', ({ status }) => {
-      if (this.currentStatus === 'not-found') return;
+      if (isFinal(this.currentStatus)) return;
+      if (status === 'disconnected' && recheckingAccess) {
+        this.setStatus('connecting');
+        return;
+      }
       // Пока клиент переподключается после обрыва, для пользователя это всё ещё «нет связи».
       if (status === 'connecting' && this.currentStatus === 'disconnected') return;
       this.setStatus(status);
     });
     provider.on('closed', ({ code }) => {
-      if (code === BOARD_NOT_FOUND) this.setStatus('not-found');
-      if (code === SIGNED_OUT) reportSignedOut();
+      if (code === SIGNED_OUT) {
+        reportSignedOut();
+        return;
+      }
+      if (code !== BOARD_NOT_FOUND && code !== FORBIDDEN) return;
+      this.setStatus(code === FORBIDDEN ? 'forbidden' : 'not-found');
+      // Доски больше нет или доступ к ней отозван: её локальная копия не должна остаться
+      // в браузере.
+      void local.clearData();
     });
 
     return () => {

@@ -73,6 +73,7 @@ async def update_user(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Нельзя заблокировать себя или снять с себя права"
         )
+    role_changed = body.role is not None and body.role != user.role
     if body.name is not None:
         user.name = body.name
     if body.role is not None:
@@ -88,4 +89,7 @@ async def update_user(
     await db.commit()
     if signed_out:
         await sockets.close_user(user.id)
+    elif role_changed:
+        # Администратор управляет всеми досками, поэтому права на открытые доски меняются.
+        await sockets.recheck_user(user.id)
     return UserOut.model_validate(user)
