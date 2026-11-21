@@ -209,3 +209,63 @@ describe('Editor', () => {
     expect(editor.doc.size).toBe(0);
   });
 });
+
+describe('Editor in read-only mode', () => {
+  function viewerWithShapes() {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    editor.setTool('arrow');
+    drag(editor, [300, 0], [500, 0]);
+    editor.setReadOnly(true);
+    const [rect] = shapes(editor.doc);
+    const [arrow] = arrows(editor.doc);
+    return { editor, rect: defined(rect), arrow: defined(arrow) };
+  }
+
+  it('lets a viewer select and look around but not change anything', () => {
+    const { editor, rect, arrow } = viewerWithShapes();
+    const before = editor.doc.list();
+
+    editor.setTool('rectangle');
+    expect(editor.tool).toBe('select');
+    drag(editor, [50, 50], [250, 250]);
+    expect([...editor.selection]).toEqual([rect.id]);
+    expect(editor.handlePositions()).toEqual([]);
+
+    editor.select([arrow.id]);
+    expect(editor.selectedArrow()).toBeUndefined();
+    drag(editor, [500, 0], [600, 100]);
+
+    editor.select([rect.id]);
+    editor.doubleClick({ x: 50, y: 50 });
+    expect(editor.editingId).toBeNull();
+    editor.deleteSelection();
+    editor.duplicateSelection();
+    editor.setArrowRoute('elbow');
+    editor.undo();
+    expect(editor.keyDown({ key: 'Delete' })).toBe(true);
+    expect(editor.doc.list()).toEqual(before);
+
+    editor.wheel({ x: 0, y: 0 }, 0, 100, false);
+    expect(editor.camera.y).not.toBe(0);
+  });
+
+  it('drops an unfinished edit when access is reduced', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    const rect = defined(shapes(editor.doc)[0]);
+    editor.startEditing(rect.id);
+    editor.setEditingText('Не успел');
+    editor.setTool('pen');
+
+    editor.setReadOnly(true);
+    expect(editor.getState()).toMatchObject({ readOnly: true, editingId: null, tool: 'select' });
+    expect(editor.doc.get(rect.id)).toMatchObject({ text: '' });
+
+    editor.setReadOnly(false);
+    editor.setTool('ellipse');
+    expect(editor.tool).toBe('ellipse');
+  });
+});

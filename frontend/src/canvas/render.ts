@@ -217,9 +217,9 @@ function drawSelection(ctx: CanvasRenderingContext2D, editor: Editor, theme: The
     ctx.strokeRect(point.x - size / 2, point.y - size / 2, size, size);
   }
 
-  const single = editor.singleSelected();
-  if (single && isArrow(single)) {
-    const { start, end } = resolveArrow(single, lookup);
+  const arrow = editor.selectedArrow();
+  if (arrow) {
+    const { start, end } = resolveArrow(arrow, lookup);
     for (const p of [start, end]) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, size / 2 + 1 / zoom, 0, Math.PI * 2);

@@ -1,16 +1,22 @@
 """Зависимости FastAPI для проверки входа и прав."""
 
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.orm import joinedload
 from starlette.requests import HTTPConnection
 
+from app.access import Access, access_to
 from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.auth.throttle import LoginThrottle
 from app.db import DbSession
-from app.models import Role, User
-from app.sync.sockets import SessionSockets
+from app.models import Board, Role, User
+from app.sync.room import RoomManager
+from app.sync.sockets import BoardSockets
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -56,6 +62,39 @@ async def admin_user(user: CurrentUser) -> User:
 
 AdminUser = Annotated[User, Depends(admin_user)]
 
+NO_ACCESS = "Нет доступа к доске. Попросите владельца поделиться ею."
+
+
+@dataclass(frozen=True)
+class BoardAccess:
+    """Доска из пути запроса и права на неё того, кто спрашивает."""
+
+    board: Board
+    user: User
+    access: Access
+
+
+def board_access(needed: Access) -> Callable[..., Awaitable[BoardAccess]]:
+    """Зависимость: доска board_id из пути, если у пользователя есть доступ не ниже needed."""
+
+    async def dependency(board_id: uuid.UUID, user: CurrentUser, db: DbSession) -> BoardAccess:
+        board = await db.get(Board, board_id, options=[joinedload(Board.owner)])
+        if board is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Доска не найдена")
+        access = await access_to(db, board, user)
+        if access is None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, NO_ACCESS)
+        if not access.allows(needed):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав для этого действия")
+        return BoardAccess(board, user, access)
+
+    return dependency
+
+
+ViewableBoard = Annotated[BoardAccess, Depends(board_access(Access.VIEW))]
+EditableBoard = Annotated[BoardAccess, Depends(board_access(Access.EDIT))]
+ManagedBoard = Annotated[BoardAccess, Depends(board_access(Access.MANAGE))]
+
 
 def login_throttle(request: Request) -> LoginThrottle:
     throttle: LoginThrottle = request.app.state.login_throttle
@@ -65,9 +104,17 @@ def login_throttle(request: Request) -> LoginThrottle:
 Throttle = Annotated[LoginThrottle, Depends(login_throttle)]
 
 
-def session_sockets(request: Request) -> SessionSockets:
-    sockets: SessionSockets = request.app.state.sockets
+def board_sockets(request: Request) -> BoardSockets:
+    sockets: BoardSockets = request.app.state.sockets
     return sockets
 
 
-OpenSockets = Annotated[SessionSockets, Depends(session_sockets)]
+OpenSockets = Annotated[BoardSockets, Depends(board_sockets)]
+
+
+def open_rooms(request: Request) -> RoomManager:
+    rooms: RoomManager = request.app.state.rooms
+    return rooms
+
+
+OpenRooms = Annotated[RoomManager, Depends(open_rooms)]

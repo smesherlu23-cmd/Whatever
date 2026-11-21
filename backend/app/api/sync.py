@@ -1,18 +1,15 @@
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, WebSocket
 
+from app.access import Access, access_to
 from app.auth.dependencies import is_same_origin
 from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.db import session_factory
 from app.models import Board
 from app.sync.room import Connection, RoomManager
-from app.sync.sockets import (
-    BOARD_NOT_FOUND,
-    FOREIGN_ORIGIN,
-    NOT_AUTHENTICATED,
-    SessionSockets,
-)
+from app.sync.sockets import BOARD_NOT_FOUND, FORBIDDEN, NOT_AUTHENTICATED, BoardSockets
 
 router = APIRouter()
 
@@ -23,26 +20,37 @@ class _RejectedError(Exception):
         self.code = code
 
 
-async def _authenticate(websocket: WebSocket, board_id: uuid.UUID) -> tuple[uuid.UUID, str]:
-    """Пользователь и токен его сессии. Если подключение принять нельзя, бросает _RejectedError."""
+@dataclass(frozen=True)
+class _Admitted:
+    user_id: uuid.UUID
+    token: str
+    can_edit: bool
+
+
+async def _admit(websocket: WebSocket, board_id: uuid.UUID) -> _Admitted:
+    """Кто подключается и может ли он править доску. Если пускать нельзя, бросает _RejectedError."""
     if not is_same_origin(websocket):
-        raise _RejectedError(FOREIGN_ORIGIN)
+        raise _RejectedError(FORBIDDEN)
     token = websocket.cookies.get(COOKIE_NAME)
     async with session_factory()() as session:
         user = await user_for_token(session, token) if token else None
         if token is None or user is None:
             raise _RejectedError(NOT_AUTHENTICATED)
-        if await session.get(Board, board_id) is None:
+        board = await session.get(Board, board_id)
+        if board is None:
             raise _RejectedError(BOARD_NOT_FOUND)
-        return user.id, token
+        access = await access_to(session, board, user)
+        if access is None:
+            raise _RejectedError(FORBIDDEN)
+        return _Admitted(user.id, token, can_edit=access.allows(Access.EDIT))
 
 
 @router.websocket("/ws/boards/{board_id}")
 async def board_socket(websocket: WebSocket, board_id: uuid.UUID) -> None:
     rooms: RoomManager = websocket.app.state.rooms
-    sockets: SessionSockets = websocket.app.state.sockets
+    sockets: BoardSockets = websocket.app.state.sockets
     try:
-        user_id, token = await _authenticate(websocket, board_id)
+        admitted = await _admit(websocket, board_id)
     except _RejectedError as rejected:
         # Свой код закрытия браузер получит, только если соединение сначала принять.
         await websocket.accept()
@@ -50,8 +58,10 @@ async def board_socket(websocket: WebSocket, board_id: uuid.UUID) -> None:
         return
 
     await websocket.accept()
-    conn = Connection(websocket.send_bytes)
-    with sockets.track(websocket, user_id, token):
+    conn = Connection(websocket.send_bytes, can_edit=admitted.can_edit)
+    with sockets.track(
+        websocket, user_id=admitted.user_id, token=admitted.token, board_id=board_id
+    ):
         async with rooms.connect(board_id, conn) as room:
             # iter_bytes заканчивается, когда клиент отключился или сервер закрыл соединение.
             async for message in websocket.iter_bytes():

@@ -2,6 +2,7 @@ import os
 import tempfile
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,30 @@ def create_user(
 def log_in(client: TestClient, login: str, password: str = PASSWORD) -> None:
     response = client.post("/api/auth/login", json={"login": login, "password": password})
     assert response.status_code == 200, response.text
+
+
+@dataclass(frozen=True)
+class Account:
+    """Вошедший пользователь: его id и cookie сессии."""
+
+    id: str
+    login: str
+    cookies: dict[str, str]
+
+
+def sign_in(client: TestClient, role: Role = Role.USER) -> Account:
+    """Создаёт пользователя и входит под ним. Клиент остаётся в его сессии."""
+    login = create_user(client, role)
+    client.cookies.clear()
+    log_in(client, login)
+    user_id: str = client.get("/api/auth/me").json()["id"]
+    return Account(user_id, login, dict(client.cookies))
+
+
+def act_as(client: TestClient, account: Account) -> None:
+    """Дальнейшие запросы клиента идут от имени account."""
+    client.cookies.clear()
+    client.cookies.update(account.cookies)
 
 
 @pytest.fixture

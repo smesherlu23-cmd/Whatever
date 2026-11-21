@@ -87,6 +87,7 @@ type Interaction =
   | { type: 'draw' };
 
 export interface EditorState {
+  readOnly: boolean;
   tool: Tool;
   smartDrawing: boolean;
   /** Вид линии для новых стрелок. */
@@ -113,6 +114,11 @@ export class Editor {
   /** Умное рисование: каждый штрих превращается в ровную фигуру, если он на неё похож. */
   smartDrawing = true;
   arrowRoute: ArrowRoute = 'straight';
+  /**
+   * Только просмотр: можно выделять, смотреть и двигать камеру, но не менять документ.
+   * Это удобство для зрителя, а не защита: правки зрителя отбрасывает сервер.
+   */
+  readOnly = false;
   /** Штрих, который рисуется сейчас, в мировых координатах. */
   stroke: Point[] | null = null;
 
@@ -144,6 +150,7 @@ export class Editor {
 
   getState(): EditorState {
     return {
+      readOnly: this.readOnly,
       tool: this.tool,
       smartDrawing: this.smartDrawing,
       arrowRoute: this.arrowRoute,
@@ -172,6 +179,21 @@ export class Editor {
 
   // ---------- Инструменты, выделение, камера ----------
 
+  /** Включает и выключает просмотр. Незавершённое действие и ввод текста отменяются. */
+  setReadOnly(readOnly: boolean): void {
+    if (readOnly === this.readOnly) return;
+    this.readOnly = readOnly;
+    if (readOnly) {
+      this.interaction = { type: 'none' };
+      this.stroke = null;
+      this.marquee = null;
+      this.editingId = null;
+      this.draftText = '';
+      this.tool = 'select';
+    }
+    this.emit();
+  }
+
   setSmartDrawing(enabled: boolean): void {
     this.smartDrawing = enabled;
     this.emit();
@@ -190,6 +212,7 @@ export class Editor {
 
   /** Вид линии для новых стрелок и для выделенных: меняются одним шагом отмены. */
   setArrowRoute(route: ArrowRoute): void {
+    if (this.readOnly) return;
     this.arrowRoute = route;
     const arrows = this.selectedArrows().filter((arrow) => arrow.route !== route);
     if (arrows.length > 0) {
@@ -203,6 +226,7 @@ export class Editor {
   }
 
   setTool(tool: Tool): void {
+    if (this.readOnly && tool !== 'select') return;
     this.tool = tool;
     if (tool !== 'select') this.selection = new Set();
     this.emit();
@@ -247,7 +271,7 @@ export class Editor {
   /** Ручки изменения размера для одной выделенной фигуры. */
   handlePositions(): { handle: Handle; point: Point }[] {
     const el = this.singleSelected();
-    if (!el || isArrow(el)) return [];
+    if (!el || isArrow(el) || this.readOnly) return [];
     const { x, y, w, h } = el;
     const xs = { w: x, c: x + w / 2, e: x + w };
     const ys = { n: y, c: y + h / 2, s: y + h };
@@ -272,8 +296,8 @@ export class Editor {
   }
 
   private arrowEndAt(world: Point): { id: string; which: 'start' | 'end' } | undefined {
-    const el = this.singleSelected();
-    if (!el || !isArrow(el)) return undefined;
+    const el = this.selectedArrow();
+    if (!el) return undefined;
     const { start, end } = resolveArrow(el, this.lookup);
     const radius = this.px(HANDLE_SIZE_PX);
     if (distance(start, world) <= radius) return { id: el.id, which: 'start' };
@@ -285,6 +309,12 @@ export class Editor {
     if (this.selection.size !== 1) return undefined;
     const [id] = this.selection;
     return id === undefined ? undefined : this.doc.get(id);
+  }
+
+  /** Единственная выделенная стрелка, концы которой можно перетаскивать. */
+  selectedArrow(): ArrowElement | undefined {
+    const el = this.singleSelected();
+    return el && isArrow(el) && !this.readOnly ? el : undefined;
   }
 
   // ---------- Указатель ----------
@@ -373,7 +403,7 @@ export class Editor {
       } else if (!this.selection.has(hit.id)) {
         this.selection = new Set([hit.id]);
       }
-      this.interaction = { type: 'move', last: world };
+      this.interaction = this.readOnly ? { type: 'none' } : { type: 'move', last: world };
       this.emit();
       return;
     }
@@ -547,6 +577,7 @@ export class Editor {
   }
 
   doubleClick(screen: Point): void {
+    if (this.readOnly) return;
     const hit = this.elementAt(this.toWorld(screen));
     if (hit && hasText(hit)) {
       this.selection = new Set([hit.id]);
@@ -566,7 +597,7 @@ export class Editor {
    * сменой инструмента или уходом фокуса.
    */
   startEditing(id: string): void {
-    if (this.editingId === id) return;
+    if (this.readOnly || this.editingId === id) return;
     if (this.editingId) this.stopEditing();
     const el = this.doc.get(id);
     if (!el || !hasText(el)) return;
@@ -609,7 +640,7 @@ export class Editor {
   // ---------- Команды ----------
 
   deleteSelection(): void {
-    if (this.selection.size === 0) return;
+    if (this.readOnly || this.selection.size === 0) return;
     this.doc.stopCapturing();
     this.doc.remove(this.selection);
     this.doc.stopCapturing();
@@ -618,6 +649,7 @@ export class Editor {
   }
 
   duplicateSelection(): void {
+    if (this.readOnly) return;
     const originals = [...this.selection]
       .map((id) => this.doc.get(id))
       .filter((el) => el !== undefined);
@@ -648,11 +680,11 @@ export class Editor {
   }
 
   undo(): void {
-    this.doc.undo();
+    if (!this.readOnly) this.doc.undo();
   }
 
   redo(): void {
-    this.doc.redo();
+    if (!this.readOnly) this.doc.redo();
   }
 
   /** Возвращает true, если клавиша обработана и браузеру её отдавать не нужно. */

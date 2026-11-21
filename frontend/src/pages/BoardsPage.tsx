@@ -1,76 +1,142 @@
 import { useEffect, useState } from 'react';
 import { api, type BoardInfo } from '../api';
-import { navigate } from '../router';
+import { useAuth } from '../auth/context';
+import { type BoardsView, boardsPath } from '../router';
 import controls from '../ui/controls.module.css';
 import { Link } from '../ui/Link';
 import { AppHeader } from './AppHeader';
+import list from './boards/boards.module.css';
+import { ACCESS_TEXT, BoardRow, confirmAndDelete } from './boards/BoardRow';
+import { MyBoards } from './boards/MyBoards';
 import styles from './pages.module.css';
 
-const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
+const UNREACHABLE = 'Сервер недоступен. Попробуйте обновить страницу.';
 
-export function BoardsPage() {
-  const [boards, setBoards] = useState<BoardInfo[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listBoards()
-      .then((list) => {
-        if (!cancelled) setBoards(list);
-      })
-      .catch(() => {
-        if (!cancelled) setError('Сервер недоступен. Попробуйте обновить страницу.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const create = async () => {
-    try {
-      const board = await api.createBoard('Новая доска');
-      navigate(`/b/${board.id}`);
-    } catch {
-      setError('Не удалось создать доску. Проверьте связь с сервером.');
-    }
-  };
-
-  const remove = async (board: BoardInfo) => {
-    if (!window.confirm(`Удалить доску «${board.name}»? Это нельзя отменить.`)) return;
-    try {
-      await api.deleteBoard(board.id);
-      setBoards((list) => list?.filter((item) => item.id !== board.id) ?? null);
-    } catch {
-      setError(`Не удалось удалить доску «${board.name}». Проверьте связь с сервером.`);
-    }
-  };
-
+/** Список досок: свои по папкам, доступные от коллег и, для администратора, все. */
+export function BoardsPage({ view }: { view: BoardsView }) {
+  const { user } = useAuth();
+  const admin = user.role === 'admin';
   return (
     <div className={styles.app}>
       <AppHeader />
       <main className={styles.page}>
-        <div className={styles.listHeader}>
-          <h1>Доски</h1>
-          <button type="button" className={controls.primary} onClick={() => void create()}>
-            Создать доску
-          </button>
-        </div>
-        {error && (
-          <p className={controls.error} role="alert">
-            {error}
-          </p>
-        )}
-        {boards?.length === 0 && <p className={controls.muted}>Досок пока нет. Создайте первую.</p>}
+        <nav className={list.tabs} aria-label="Разделы досок">
+          <Tab to={boardsPath({ view: 'mine', folderId: null })} current={view.view === 'mine'}>
+            Мои доски
+          </Tab>
+          <Tab to={boardsPath({ view: 'shared' })} current={view.view === 'shared'}>
+            Доступные мне
+          </Tab>
+          {admin && (
+            <Tab to={boardsPath({ view: 'all' })} current={view.view === 'all'}>
+              Все доски
+            </Tab>
+          )}
+        </nav>
+        {view.view === 'mine' && <MyBoards folderId={view.folderId} />}
+        {view.view === 'shared' && <SharedBoards />}
+        {view.view === 'all' &&
+          (admin ? (
+            <AllBoards />
+          ) : (
+            <p className={controls.muted}>Раздел доступен только администраторам.</p>
+          ))}
+      </main>
+    </div>
+  );
+}
+
+function Tab({ to, current, children }: { to: string; current: boolean; children: string }) {
+  return (
+    <Link to={to} className={list.tab} aria-current={current ? 'page' : undefined}>
+      {children}
+    </Link>
+  );
+}
+
+/** Загружает список досок при открытии раздела. load — постоянная функция из api. */
+function useBoards(load: () => Promise<BoardInfo[]>) {
+  const [boards, setBoards] = useState<BoardInfo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    load().then(
+      (loaded) => {
+        if (!cancelled) setBoards(loaded);
+      },
+      () => {
+        if (!cancelled) setError(UNREACHABLE);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [load]);
+  return { boards, setBoards, error, setError };
+}
+
+/** Чужие доски, к которым пользователю дали доступ. */
+function SharedBoards() {
+  const { user } = useAuth();
+  const { boards, error } = useBoards(api.listBoards);
+  const shared = boards?.filter((board) => board.owner?.id !== user.id);
+  return (
+    <>
+      <div className={styles.listHeader}>
+        <h1>Доступные мне</h1>
+      </div>
+      {error && (
+        <p className={controls.error} role="alert">
+          {error}
+        </p>
+      )}
+      {shared?.length === 0 && (
+        <p className={controls.muted}>
+          С вами пока не поделились досками. Попросите коллегу добавить вас или прислать ссылку.
+        </p>
+      )}
+      {shared && shared.length > 0 && (
         <ul className={styles.boards}>
-          {boards?.map((board) => (
-            <li key={board.id}>
-              <Link to={`/b/${board.id}`}>
-                <span className={styles.boardName}>{board.name}</span>
-                <span className={controls.muted}>
-                  изменена {dateFormat.format(new Date(board.updated_at))}
-                </span>
-              </Link>
+          {shared.map((board) => (
+            <BoardRow
+              key={board.id}
+              board={board}
+              details={[`владелец ${board.owner?.name ?? 'не указан'}`, ACCESS_TEXT[board.access]]}
+            />
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+/** Все доски сервера: администратор находит и удаляет любую. */
+function AllBoards() {
+  const { boards, setBoards, error, setError } = useBoards(api.listAllBoards);
+  const remove = async (board: BoardInfo) => {
+    if (await confirmAndDelete(board, setError)) {
+      setBoards((all) => all?.filter((b) => b.id !== board.id) ?? null);
+    }
+  };
+  return (
+    <>
+      <div className={styles.listHeader}>
+        <h1>Все доски</h1>
+      </div>
+      {error && (
+        <p className={controls.error} role="alert">
+          {error}
+        </p>
+      )}
+      {boards?.length === 0 && <p className={controls.muted}>На сервере пока нет досок.</p>}
+      {boards && boards.length > 0 && (
+        <ul className={styles.boards}>
+          {boards.map((board) => (
+            <BoardRow
+              key={board.id}
+              board={board}
+              details={[`владелец ${board.owner?.name ?? 'не указан'}`]}
+            >
               <button
                 type="button"
                 className={controls.ghost}
@@ -79,10 +145,10 @@ export function BoardsPage() {
               >
                 Удалить
               </button>
-            </li>
+            </BoardRow>
           ))}
         </ul>
-      </main>
-    </div>
+      )}
+    </>
   );
 }

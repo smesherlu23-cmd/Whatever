@@ -37,7 +37,16 @@ export class FakeSocket {
 /** Замена y-indexeddb для jsdom, где нет IndexedDB. Подключается через vi.mock. */
 export const indexeddbStub = {
   IndexeddbPersistence: class {
+    static cleared: string[] = [];
+
+    constructor(readonly name: string) {}
+
     destroy(): Promise<void> {
+      return Promise.resolve();
+    }
+
+    clearData(): Promise<void> {
+      indexeddbStub.IndexeddbPersistence.cleared.push(this.name);
       return Promise.resolve();
     }
   },

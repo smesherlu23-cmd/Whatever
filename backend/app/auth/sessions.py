@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.db import as_utc
 from app.models import Session, User
 
 COOKIE_NAME = "whatever_session"
@@ -56,7 +57,7 @@ async def user_for_token(db: AsyncSession, token: str) -> User | None:
         return None
     session, user = row
     now = datetime.now(UTC)
-    expires_at = session.expires_at.replace(tzinfo=session.expires_at.tzinfo or UTC)
+    expires_at = as_utc(session.expires_at)
     if expires_at <= now or not user.is_active:
         await db.delete(session)
         await db.commit()
