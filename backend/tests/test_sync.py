@@ -19,7 +19,7 @@ from pycrdt import (
 from starlette.websockets import WebSocketDisconnect
 
 from app.models import Role
-from tests.conftest import PASSWORD, create_user, log_in
+from tests.conftest import PASSWORD, Account, act_as, log_in, sign_in
 
 
 class YClient:
@@ -184,19 +184,14 @@ def close_code(ws: Any) -> int:
 
 def test_blocking_a_user_disconnects_their_open_boards(anon_client: TestClient) -> None:
     client = anon_client
-    log_in(client, create_user(client, Role.ADMIN))
-    admin_cookies = dict(client.cookies)
+    admin = sign_in(client, Role.ADMIN)
+    user = sign_in(client)
     board = new_board(client)
-    login = create_user(client)
-    user_id = next(u["id"] for u in client.get("/api/admin/users").json() if u["login"] == login)
 
-    client.cookies.clear()
-    log_in(client, login)
     with client.websocket_connect(f"/ws/boards/{board}") as ws:
         YClient(ws).handshake()
-        client.cookies.clear()
-        client.cookies.update(admin_cookies)
-        client.patch(f"/api/admin/users/{user_id}", json={"is_active": False})
+        act_as(client, admin)
+        client.patch(f"/api/admin/users/{user.id}", json={"is_active": False})
         assert close_code(ws) == 4401
 
 
@@ -229,3 +224,106 @@ def test_logout_disconnects_boards_of_this_session(client: TestClient) -> None:
         YClient(ws).handshake()
         client.post("/api/auth/logout")
         assert close_code(ws) == 4401
+
+
+def share(client: TestClient, board: str, user: Account, role: str) -> None:
+    response = client.put(f"/api/boards/{board}/members/{user.id}", json={"role": role})
+    assert response.status_code == 200, response.text
+
+
+def test_viewer_sees_changes_but_cannot_make_them(anon_client: TestClient) -> None:
+    client = anon_client
+    viewer = sign_in(client)
+    owner = sign_in(client)
+    board = new_board(client)
+    share(client, board, viewer, "viewer")
+
+    with client.websocket_connect(f"/ws/boards/{board}") as owner_ws:
+        alice = YClient(owner_ws)
+        alice.handshake()
+        alice.set("by-owner", 1)
+        alice.flush()
+        act_as(client, viewer)
+        with client.websocket_connect(f"/ws/boards/{board}") as viewer_ws:
+            bob = YClient(viewer_ws)
+            bob.handshake()
+            assert bob.elements.to_py() == {"by-owner": 1}
+            # Изменение зрителя сервер не применяет и никому не пересылает.
+            bob.set("by-viewer", 2)
+            bob.flush()
+            alice.set("after", 3)
+            bob.receive_sync(YSyncMessageType.SYNC_UPDATE)
+            assert "after" in bob.elements.to_py()
+
+    act_as(client, owner)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        carol = YClient(ws)
+        carol.handshake()
+        assert carol.elements.to_py() == {"by-owner": 1, "after": 3}
+
+
+def test_board_without_access_is_rejected(anon_client: TestClient) -> None:
+    client = anon_client
+    sign_in(client)
+    board = new_board(client)
+    sign_in(client)
+    with (
+        client.websocket_connect(f"/ws/boards/{board}") as ws,
+        pytest.raises(WebSocketDisconnect) as closed,
+    ):
+        ws.receive_bytes()
+    assert closed.value.code == 4403
+
+
+def test_changing_access_reconnects_the_member(anon_client: TestClient) -> None:
+    client = anon_client
+    member = sign_in(client)
+    owner = sign_in(client)
+    board = new_board(client)
+    share(client, board, member, "editor")
+
+    act_as(client, member)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        YClient(ws).handshake()
+        act_as(client, owner)
+        share(client, board, member, "viewer")
+        # Клиент переподключится сам и получит права заново.
+        assert close_code(ws) == 4100
+
+    act_as(client, member)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        YClient(ws).handshake()
+        act_as(client, owner)
+        assert client.delete(f"/api/boards/{board}/members/{member.id}").status_code == 204
+        assert close_code(ws) == 4100
+
+    act_as(client, member)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        assert close_code(ws) == 4403
+
+
+def test_demoted_admin_rechecks_access_to_open_boards(anon_client: TestClient) -> None:
+    client = anon_client
+    admin = sign_in(client, Role.ADMIN)
+    demoted = sign_in(client, Role.ADMIN)
+    sign_in(client)
+    board = new_board(client)
+
+    act_as(client, demoted)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        YClient(ws).handshake()
+        act_as(client, admin)
+        client.patch(f"/api/admin/users/{demoted.id}", json={"role": "user"})
+        assert close_code(ws) == 4100
+
+
+def test_deleting_a_board_disconnects_everyone(client: TestClient) -> None:
+    board = new_board(client)
+    with client.websocket_connect(f"/ws/boards/{board}") as ws:
+        alice = YClient(ws)
+        alice.handshake()
+        alice.set("unsaved", 1)
+        alice.flush()
+        assert client.delete(f"/api/boards/{board}").status_code == 204
+        assert close_code(ws) == 4404
+    assert client.get(f"/api/boards/{board}").status_code == 404

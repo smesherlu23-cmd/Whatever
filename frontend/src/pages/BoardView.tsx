@@ -27,17 +27,23 @@ export function BoardView({
           <TextEditor key={state.editingId} editor={editor} id={state.editingId} />
         )}
         <div className={styles.toolbar}>
-          <Toolbar
-            tool={state.tool}
-            onChange={(tool) => editor.setTool(tool)}
-            smartDrawing={state.smartDrawing}
-            onSmartDrawingChange={(enabled) => editor.setSmartDrawing(enabled)}
-            arrowRoute={state.arrowRoute}
-            selectionRoute={state.selectionRoute}
-            onArrowRouteChange={(route) => editor.setArrowRoute(route)}
-            onUndo={() => editor.undo()}
-            onRedo={() => editor.redo()}
-          />
+          {state.readOnly ? (
+            <p className={styles.readOnly} role="status">
+              Только просмотр
+            </p>
+          ) : (
+            <Toolbar
+              tool={state.tool}
+              onChange={(tool) => editor.setTool(tool)}
+              smartDrawing={state.smartDrawing}
+              onSmartDrawingChange={(enabled) => editor.setSmartDrawing(enabled)}
+              arrowRoute={state.arrowRoute}
+              selectionRoute={state.selectionRoute}
+              onArrowRouteChange={(route) => editor.setArrowRoute(route)}
+              onUndo={() => editor.undo()}
+              onRedo={() => editor.redo()}
+            />
+          )}
         </div>
         <div className={styles.zoom} aria-live="polite">
           {Math.round(state.camera.zoom * 100)}%

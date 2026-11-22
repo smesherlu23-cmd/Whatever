@@ -3,6 +3,7 @@
 Каждая открытая доска — комната с документом pycrdt в памяти. Клиент и сервер обмениваются
 сообщениями синхронизации (SYNC) и присутствия (AWARENESS). Изменения документа сразу
 рассылаются остальным участникам, а в PostgreSQL пишутся пачками (см. Room.save).
+Изменения от подключений без права редактирования отбрасываются (см. Room._receive_sync).
 """
 
 import asyncio
@@ -19,6 +20,7 @@ from pycrdt import (
     Awareness,
     Doc,
     YMessageType,
+    YSyncMessageType,
     create_awareness_message,
     create_sync_message,
     create_update_message,
@@ -46,10 +48,15 @@ Sessions = async_sessionmaker[AsyncSession]
 
 
 class Connection:
-    """Одно подключение к комнате. Помнит id клиентов Yjs, чьё присутствие оно передавало."""
+    """Одно подключение к комнате. Помнит id клиентов Yjs, чьё присутствие оно передавало.
 
-    def __init__(self, send: Send) -> None:
+    can_edit задаётся при подключении. Когда права меняются, подключение закрывают,
+    и клиент подключается заново уже с новыми правами (см. BoardSockets).
+    """
+
+    def __init__(self, send: Send, *, can_edit: bool = True) -> None:
         self.send = send
+        self.can_edit = can_edit
         self.client_ids: set[int] = set()
 
 
@@ -74,6 +81,7 @@ class Room:
         self._saving: set[asyncio.Task[None]] = set()
         self._save_lock = asyncio.Lock()
         self._closed = False
+        self._discarded = False
         self.doc.observe(lambda event: self._received.append(event.update))
         self.awareness.observe(self._on_awareness)
 
@@ -131,14 +139,23 @@ class Room:
             log.warning("board %s: saving failed, will retry", self.board_id, exc_info=True)
             self._schedule_save()
 
-    async def close(self) -> None:
-        """Записывает всё несохранённое и сжимает историю доски."""
+    def _stop_saving(self) -> None:
         self._closed = True
         if self._save_timer is not None:
             self._save_timer.cancel()
             self._save_timer = None
+
+    def discard(self) -> None:
+        """Доску удалили: всё несохранённое отбрасывается, писать его уже некуда."""
+        self._stop_saving()
+        self._discarded = True
+        self._unsaved.clear()
+
+    async def close(self) -> None:
+        """Записывает всё несохранённое и сжимает историю доски."""
+        self._stop_saving()
         await asyncio.gather(*self._saving, return_exceptions=True)
-        if not self.loaded:
+        if not self.loaded or self._discarded:
             # Документ не загрузился: сохранять и сжимать нечего, а сжатие стёрло бы историю.
             return
         await self.save()
@@ -195,6 +212,11 @@ class Room:
             await self._send_awareness(conn)
 
     async def _receive_sync(self, conn: Connection, message: bytes) -> None:
+        if not conn.can_edit and message[1:2] != bytes([YSyncMessageType.SYNC_STEP1]):
+            # Шаг 1 — только запрос недостающего, а шаг 2 и обновления меняют документ.
+            # Зрителю отвечают на запрос, но его изменения не применяются и не рассылаются.
+            log.debug("board %s: dropped a change from a read-only connection", self.board_id)
+            return
         # Между применением сообщения и чтением изменений нет await,
         # поэтому изменения из других подключений сюда не попадут.
         reply = handle_sync_message(message[1:], self.doc)
@@ -290,6 +312,12 @@ class RoomManager:
             # Запись защищена от отмены: уже принятые изменения сохранятся,
             # даже если обработчик подключения прервали.
             await asyncio.shield(closing)
+
+    def discard(self, board_id: uuid.UUID) -> None:
+        """Доску удалили: её открытая комната больше ничего не запишет."""
+        entry = self._rooms.get(board_id)
+        if entry is not None:
+            entry.room.discard()
 
     def _forget_closing(self, board_id: uuid.UUID, task: asyncio.Task[None]) -> None:
         if self._closing.get(board_id) is task:

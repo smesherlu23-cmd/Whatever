@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { onSignedOut } from '../api';
-import { FakeSocket } from '../testing/fakeSocket';
+import { FakeSocket, indexeddbStub } from '../testing/fakeSocket';
 import { BoardSession } from './session';
 
 // В jsdom нет IndexedDB; локальная копия проверяется вручную в браузере.
@@ -55,6 +55,35 @@ describe('BoardSession', () => {
     expect(listener).toHaveBeenCalled();
     vi.advanceTimersByTime(10_000);
     expect(FakeSocket.instances).toHaveLength(1);
+    stop();
+  });
+
+  it('stops reconnecting and drops the local copy when access is revoked', () => {
+    const session = new BoardSession('secret', 'Анна');
+    const stop = session.start();
+    FakeSocket.last().open();
+    FakeSocket.last().closeByServer(4403);
+
+    expect(session.status).toBe('forbidden');
+    expect(indexeddbStub.IndexeddbPersistence.cleared).toContain('whatever-board-secret');
+    vi.advanceTimersByTime(10_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+    stop();
+  });
+
+  it('reconnects quietly when access changes', () => {
+    const session = new BoardSession('board-1', 'Анна');
+    const stop = session.start();
+    FakeSocket.last().open();
+    FakeSocket.last().closeByServer(4100);
+    // Это не обрыв связи: «нет связи» пользователь не видит.
+    expect(session.status).toBe('connecting');
+
+    vi.advanceTimersByTime(1000);
+    FakeSocket.last().open();
+    expect(session.status).toBe('connected');
+    FakeSocket.last().closeByServer(1006);
+    expect(session.status).toBe('disconnected');
     stop();
   });
 

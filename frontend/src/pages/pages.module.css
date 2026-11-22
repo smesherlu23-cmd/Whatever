@@ -27,6 +27,17 @@
   transform: translateX(-50%);
 }
 
+.readOnly {
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+
 .zoom {
   position: absolute;
   right: 16px;

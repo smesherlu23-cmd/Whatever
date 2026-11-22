@@ -3,8 +3,9 @@ import { AccountPage } from './pages/AccountPage';
 import { AdminPage } from './pages/AdminPage';
 import { BoardPage } from './pages/BoardPage';
 import { BoardsPage } from './pages/BoardsPage';
+import { JoinPage } from './pages/JoinPage';
 import { NotFoundPage } from './pages/NotFoundPage';
-import { parseRoute, usePath } from './router';
+import { parseRoute, useLocation } from './router';
 
 export function App() {
   return (
@@ -15,12 +16,14 @@ export function App() {
 }
 
 function Pages() {
-  const route = parseRoute(usePath());
+  const route = parseRoute(useLocation());
   switch (route.page) {
     case 'boards':
-      return <BoardsPage />;
+      return <BoardsPage view={route} />;
     case 'board':
       return <BoardPage key={route.boardId} boardId={route.boardId} />;
+    case 'join':
+      return <JoinPage key={route.token} token={route.token} />;
     case 'account':
       return <AccountPage />;
     case 'admin':

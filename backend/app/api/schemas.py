@@ -1,4 +1,4 @@
-"""Схемы пользователей, общие для входа и админ-панели."""
+"""Схемы пользователей, общие для входа, админ-панели и доступа к доскам."""
 
 import uuid
 from datetime import datetime
@@ -21,6 +21,16 @@ Login = Annotated[
 ]
 Password = Annotated[str, Field(min_length=MIN_LENGTH, max_length=MAX_LENGTH)]
 PersonName = Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class Person(BaseModel):
+    """Пользователь глазами коллег: владелец доски, участник, кандидат в участники."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    login: str
+    name: str
 
 
 class UserOut(BaseModel):
