@@ -1,0 +1,9 @@
+# Дополнение для разработки: публикует PostgreSQL на localhost, чтобы бэкенд и тесты,
+# запущенные вне Docker, могли к нему подключиться. На сервере не используется.
+#
+#     make db       # то же, что docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"

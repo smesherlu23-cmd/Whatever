@@ -1,2 +1,9 @@
-node_modules
-dist
+# В образ сборки попадают только исходники: всё остальное запрещено по умолчанию.
+*
+!package.json
+!package-lock.json
+!index.html
+!tsconfig.json
+!vite.config.ts
+!nginx.conf
+!src/
