@@ -59,7 +59,7 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Стрелка' }));
     fireEvent.click(screen.getByRole('button', { name: 'Ломаная' }));
-    expect(editor.arrowRoute).toBe('elbow');
+    expect(editor.arrowStyle.route).toBe('elbow');
     expect(screen.getByRole('button', { name: 'Ломаная' }).getAttribute('aria-pressed')).toBe(
       'true',
     );

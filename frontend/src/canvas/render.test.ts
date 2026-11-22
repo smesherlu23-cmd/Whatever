@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { Peer } from '../collab/presence';
 import { Editor } from '../editor/Editor';
 import {
+  type ArrowElement,
   DEFAULT_FILL,
   DEFAULT_STICKY_FILL,
   DEFAULT_STROKE,
   type ShapeElement,
 } from '../model/types';
-import { type Theme, renderBoard } from './render';
+import { renderBoard } from './render';
+import type { Theme } from './scene';
 
 const theme: Theme = {
   background: '#f4f4f5',
@@ -102,6 +104,10 @@ describe('renderBoard', () => {
       kind: 'arrow',
       page: 'main',
       route: 'straight',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+      text: '',
       start: { x: 0, y: 0, shapeId: 'a' },
       end: { x: 300, y: 300 },
       stroke: DEFAULT_STROKE,
@@ -151,6 +157,10 @@ describe('renderBoard', () => {
       kind: 'arrow',
       page: 'main',
       route: 'elbow',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+      text: '',
       start: { x: 0, y: 0 },
       end: { x: 100, y: 40 },
       stroke: DEFAULT_STROKE,
@@ -184,5 +194,83 @@ describe('renderBoard', () => {
 
     // Олег смотрит другую страницу: его курсора здесь нет.
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual(['Анна']);
+  });
+});
+
+describe('renderBoard arrows', () => {
+  const arrow: ArrowElement = {
+    id: 'arrow',
+    kind: 'arrow',
+    page: 'main',
+    route: 'straight',
+    startHead: 'filledDiamond',
+    endHead: 'triangle',
+    dashed: true,
+    text: 'Заказ',
+    start: { x: 0, y: 0 },
+    end: { x: 200, y: 0 },
+    stroke: DEFAULT_STROKE,
+    z: 1,
+  };
+
+  it('draws a dashed line that stops short of hollow and filled heads', () => {
+    const editor = new Editor();
+    editor.doc.add(arrow);
+    const { ctx, calls } = recordingContext();
+
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+
+    expect(named(calls, 'setLineDash').map(([, dash]) => dash)).toContainEqual([6, 5]);
+    // Линия начинается за ромбом (18) и кончается у основания треугольника (200 − 14).
+    expect(named(calls, 'moveTo')).toContainEqual(['moveTo', 18, 0]);
+    expect(named(calls, 'lineTo')).toContainEqual(['lineTo', 186, 0]);
+    // Пустой треугольник залит фоном, закрашенный ромб — цветом линии.
+    const fills = named(calls, 'set fillStyle').map(([, value]) => value);
+    expect(fills).toEqual(expect.arrayContaining([theme.background, theme.shapeStroke]));
+  });
+
+  it('draws the label on a backing in the middle of the line, but not while it is edited', () => {
+    const editor = new Editor();
+    editor.doc.add(arrow);
+    const first = recordingContext();
+    renderBoard(first.ctx, editor, 800, 600, 1, theme);
+    expect(named(first.calls, 'fillText')).toEqual([['fillText', 'Заказ', 100, 0]]);
+
+    editor.startEditing('arrow');
+    const second = recordingContext();
+    renderBoard(second.ctx, editor, 800, 600, 1, theme);
+    expect(named(second.calls, 'fillText')).toEqual([]);
+  });
+
+  it('draws every kind of head', () => {
+    const editor = new Editor();
+    const heads = [
+      'none',
+      'arrow',
+      'open',
+      'diamond',
+      'circle',
+      'one',
+      'zeroOrOne',
+      'many',
+      'zeroOrMany',
+    ] as const;
+    // Начало без наконечника, чтобы считать только концы.
+    heads.forEach((head, i) => {
+      editor.doc.add({
+        ...arrow,
+        id: head,
+        text: '',
+        startHead: 'none',
+        endHead: head,
+        start: { x: 0, y: i * 40 },
+        end: { x: 200, y: i * 40 },
+      });
+    });
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+    expect(named(calls, 'arc').length).toBeGreaterThanOrEqual(3);
+    // Каждый наконечник, кроме 'none', поворачивается вдоль линии.
+    expect(named(calls, 'rotate').length).toBe(heads.length - 1);
   });
 });

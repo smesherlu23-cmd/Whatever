@@ -4,7 +4,8 @@ import type { Editor, Tool } from '../editor/Editor';
 import { screenToWorld } from './camera';
 import styles from './Board.module.css';
 import { subscribeTheme } from '../ui/theme';
-import { readTheme, renderBoard } from './render';
+import { renderBoard } from './render';
+import { readTheme } from './scene';
 
 const CURSORS: Record<Tool, string> = {
   select: 'default',

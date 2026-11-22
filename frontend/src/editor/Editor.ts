@@ -13,9 +13,10 @@ import { bindTargetAt, elementAt, hasText } from '../model/queries';
 import {
   type ArrowElement,
   type ArrowEnd,
-  type ArrowRoute,
+  type ArrowStyle,
   type BoardElement,
   type Bounds,
+  DEFAULT_ARROW_STYLE,
   DEFAULT_FILL,
   DEFAULT_PAGE,
   DEFAULT_STICKY_FILL,
@@ -47,8 +48,10 @@ function isShapeTool(tool: Tool): tool is ShapeTool {
   return SHAPE_TOOLS.has(tool);
 }
 
-/** Вид линий выделенных стрелок: один на всех, «разный» или null, если стрелок не выделено. */
-export type SelectionRoute = ArrowRoute | 'mixed' | null;
+/** Вид выделенных стрелок. Поле равно null, если у выделенных стрелок оно разное. */
+export type MixedArrowStyle = { readonly [K in keyof ArrowStyle]: ArrowStyle[K] | null };
+
+const ARROW_STYLE_KEYS = ['route', 'startHead', 'endHead', 'dashed'] as const;
 
 export type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -95,9 +98,10 @@ export interface EditorState {
   pageId: string;
   tool: Tool;
   smartDrawing: boolean;
-  /** Вид линии для новых стрелок. */
-  arrowRoute: ArrowRoute;
-  selectionRoute: SelectionRoute;
+  /** Вид новых стрелок. */
+  arrowStyle: ArrowStyle;
+  /** Вид выделенных стрелок или null, если стрелок не выделено. */
+  selectionArrowStyle: MixedArrowStyle | null;
   selection: ReadonlySet<string>;
   editingId: string | null;
   camera: Camera;
@@ -120,7 +124,8 @@ export class Editor {
   spaceHeld = false;
   /** Умное рисование: каждый штрих превращается в ровную фигуру, если он на неё похож. */
   smartDrawing = true;
-  arrowRoute: ArrowRoute = 'straight';
+  arrowStyle: ArrowStyle = DEFAULT_ARROW_STYLE;
+  private selectionStyleCache: MixedArrowStyle | null = null;
   /**
    * Только просмотр: можно выделять, смотреть и двигать камеру, но не менять документ.
    * Это удобство для зрителя, а не защита: правки зрителя отбрасывает сервер.
@@ -175,8 +180,8 @@ export class Editor {
       pageId: this.pageId,
       tool: this.tool,
       smartDrawing: this.smartDrawing,
-      arrowRoute: this.arrowRoute,
-      selectionRoute: this.selectionRoute(),
+      arrowStyle: this.arrowStyle,
+      selectionArrowStyle: this.selectionArrowStyle(),
       selection: this.selection,
       editingId: this.editingId,
       camera: this.camera,
@@ -242,22 +247,34 @@ export class Editor {
     return [...this.selection].map((id) => this.arrow(id)).filter((el) => el !== undefined);
   }
 
-  selectionRoute(): SelectionRoute {
-    const routes = new Set(this.selectedArrows().map((arrow) => arrow.route));
-    if (routes.size === 0) return null;
-    const [only] = routes;
-    return routes.size === 1 && only ? only : 'mixed';
+  selectionArrowStyle(): MixedArrowStyle | null {
+    const [first, ...rest] = this.selectedArrows();
+    if (!first) return null;
+    const common = <K extends keyof ArrowStyle>(key: K): ArrowStyle[K] | null =>
+      rest.every((arrow) => arrow[key] === first[key]) ? first[key] : null;
+    const style: MixedArrowStyle = {
+      route: common('route'),
+      startHead: common('startHead'),
+      endHead: common('endHead'),
+      dashed: common('dashed'),
+    };
+    // Пока вид не изменился, отдаётся тот же объект: панель не перерисовывается
+    // на каждое движение мыши.
+    const cached = this.selectionStyleCache;
+    if (cached && ARROW_STYLE_KEYS.every((key) => cached[key] === style[key])) return cached;
+    this.selectionStyleCache = style;
+    return style;
   }
 
-  /** Вид линии для новых стрелок и для выделенных: меняются одним шагом отмены. */
-  setArrowRoute(route: ArrowRoute): void {
+  /** Меняет вид новых стрелок и выделенных. Выделенные меняются одним шагом отмены. */
+  setArrowStyle(patch: Partial<ArrowStyle>): void {
     if (this.readOnly) return;
-    this.arrowRoute = route;
-    const arrows = this.selectedArrows().filter((arrow) => arrow.route !== route);
+    this.arrowStyle = { ...this.arrowStyle, ...patch };
+    const arrows = this.selectedArrows();
     if (arrows.length > 0) {
       this.doc.stopCapturing();
       this.doc.transact(() => {
-        for (const arrow of arrows) this.doc.update(arrow.id, { route });
+        for (const arrow of arrows) this.doc.update(arrow.id, patch);
       });
       this.doc.stopCapturing();
     }
@@ -407,7 +424,8 @@ export class Editor {
       page: this.pageId,
       start,
       end: { x: world.x, y: world.y },
-      route: this.arrowRoute,
+      text: '',
+      ...this.arrowStyle,
       stroke: DEFAULT_STROKE,
       z: this.doc.nextZ(),
     });

@@ -23,9 +23,9 @@ export function isConnectable(el: BoardElement): el is ShapeElement {
   return !isArrow(el) && el.kind !== 'path';
 }
 
-/** Фигуры, в которых можно написать текст: всё, кроме стрелок и рукописных штрихов. */
-export function hasText(el: BoardElement): el is ShapeElement {
-  return !isArrow(el) && el.kind !== 'path';
+/** Элементы, у которых есть текст: все, кроме рукописных штрихов. У стрелки это подпись. */
+export function hasText(el: BoardElement): boolean {
+  return el.kind !== 'path';
 }
 
 /** Верхняя фигура рядом с точкой, к которой можно привязать конец стрелки. */

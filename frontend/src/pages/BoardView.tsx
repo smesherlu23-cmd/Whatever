@@ -38,9 +38,9 @@ export function BoardView({
               onChange={(tool) => editor.setTool(tool)}
               smartDrawing={state.smartDrawing}
               onSmartDrawingChange={(enabled) => editor.setSmartDrawing(enabled)}
-              arrowRoute={state.arrowRoute}
-              selectionRoute={state.selectionRoute}
-              onArrowRouteChange={(route) => editor.setArrowRoute(route)}
+              arrowStyle={state.arrowStyle}
+              selectionArrowStyle={state.selectionArrowStyle}
+              onArrowStyleChange={(patch) => editor.setArrowStyle(patch)}
               onUndo={() => editor.undo()}
               onRedo={() => editor.redo()}
             />

@@ -29,6 +29,49 @@
   padding: 0 10px;
 }
 
+/* Кнопка с широкой иконкой: наконечники, пунктир. */
+.wideButton {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.wideButton:hover {
+  background: var(--bg-hover);
+}
+
+.wideButton[aria-pressed='true'],
+.wideButton[aria-expanded='true'] {
+  background: var(--bg-active);
+  color: var(--text-on-active);
+}
+
+.picker {
+  position: relative;
+}
+
+/* Выбор из нескольких вариантов под кнопкой. */
+.popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+
 .button:hover,
 .segment:hover {
   background: var(--bg-hover);

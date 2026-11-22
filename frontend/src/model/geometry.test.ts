@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { arrowPath, boundaryPoint, elementBounds, hitTest, resolveArrow } from './geometry';
+import {
+  arrowLabelBounds,
+  arrowPath,
+  boundaryPoint,
+  elementBounds,
+  hitTest,
+  labelAnchor,
+  resolveArrow,
+} from './geometry';
 import type { ArrowElement, BoardElement, ShapeElement } from './types';
 
 const shape = (kind: ShapeElement['kind'], x = 0, y = 0): ShapeElement => ({
@@ -57,6 +65,10 @@ describe('geometry', () => {
       kind: 'arrow',
       page: 'main',
       route: 'straight',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+      text: '',
       start: { x: 0, y: 0, shapeId: 'rectangle' },
       end: { x: 0, y: 0, shapeId: 'b' },
       stroke: '#000',
@@ -82,6 +94,10 @@ describe('elbow arrows', () => {
     kind: 'arrow',
     page: 'main',
     route: 'elbow',
+    startHead: 'none',
+    endHead: 'arrow',
+    dashed: false,
+    text: '',
     start: { x: 0, y: 0, shapeId: 'rectangle' },
     end: { x: 0, y: 0, shapeId: 'b' },
     stroke: '#000',
@@ -132,5 +148,41 @@ describe('elbow arrows', () => {
       ],
       end: { x: 100, y: 40 },
     });
+  });
+});
+
+describe('arrow labels', () => {
+  const free: ArrowElement = {
+    id: 'arr',
+    kind: 'arrow',
+    page: 'main',
+    route: 'straight',
+    startHead: 'none',
+    endHead: 'arrow',
+    dashed: false,
+    text: 'HTTPS',
+    start: { x: 0, y: 0 },
+    end: { x: 200, y: 0 },
+    stroke: '#000',
+    z: 1,
+  };
+  const none = () => undefined;
+
+  it('stands halfway along the line', () => {
+    expect(labelAnchor(arrowPath(free, none))).toEqual({ x: 100, y: 0 });
+    // Ломаная вниз, вбок и снова вниз: середина пути — середина среднего участка.
+    const elbow = { ...free, route: 'elbow' as const, end: { x: 100, y: 300 } };
+    expect(labelAnchor(arrowPath(elbow, none))).toEqual({ x: 50, y: 150 });
+    const dot = { start: { x: 5, y: 5 }, bends: [], end: { x: 5, y: 5 } };
+    expect(labelAnchor(dot)).toEqual({ x: 5, y: 5 });
+  });
+
+  it('can be hit and counts in the bounds of the arrow', () => {
+    expect(hitTest(free, { x: 100, y: 10 }, none, 2)).toBe(true);
+    expect(hitTest({ ...free, text: '' }, { x: 100, y: 10 }, none, 2)).toBe(false);
+    const bounds = elementBounds(free, none);
+    expect(bounds.y).toBeLessThan(0);
+    expect(bounds.h).toBeGreaterThan(0);
+    expect(arrowLabelBounds({ ...free, text: '' }, arrowPath(free, none))).toBeNull();
   });
 });

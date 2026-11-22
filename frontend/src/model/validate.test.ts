@@ -30,6 +30,10 @@ describe('parseElement', () => {
       start: { x: 0, y: 0, shapeId: 'r1' },
       end: { x: 10, y: 10 },
       route: 'elbow',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+      text: '',
       stroke: '#000',
       z: 2,
     };
@@ -54,6 +58,26 @@ describe('parseElement', () => {
     };
     expect(parseElement(arrow)).toMatchObject({ route: 'straight' });
     expect(parseElement({ ...arrow, route: 'curved' })).toMatchObject({ route: 'straight' });
+  });
+
+  it('draws arrows from before heads and labels existed as they were', () => {
+    const arrow = {
+      id: 'a1',
+      kind: 'arrow',
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      stroke: '#000',
+      z: 2,
+    };
+    expect(parseElement(arrow)).toMatchObject({
+      text: '',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+    });
+    expect(
+      parseElement({ ...arrow, startHead: 'star', endHead: 'many', dashed: 'yes', text: 5 }),
+    ).toMatchObject({ startHead: 'none', endHead: 'many', dashed: false, text: '' });
   });
 
   it.each([

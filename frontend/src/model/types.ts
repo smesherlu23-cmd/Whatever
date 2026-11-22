@@ -21,6 +21,55 @@ export const SHAPE_KINDS: readonly ShapeKind[] = [
 /** straight — отрезок между концами, elbow — ломаная из горизонтальных и вертикальных участков. */
 export type ArrowRoute = 'straight' | 'elbow';
 
+/**
+ * Наконечник на конце стрелки. Кроме обычных стрелок, это обозначения UML (пустой
+ * треугольник — наследование, ромбы — агрегация и композиция) и нотации «воронья лапка»
+ * для связей ER: one — ровно один, zeroOrOne — ноль или один, many — один или много,
+ * zeroOrMany — ноль или много.
+ */
+export type ArrowHead =
+  | 'none'
+  | 'arrow'
+  | 'open'
+  | 'triangle'
+  | 'diamond'
+  | 'filledDiamond'
+  | 'circle'
+  | 'one'
+  | 'zeroOrOne'
+  | 'many'
+  | 'zeroOrMany';
+
+export const ARROW_HEADS: readonly ArrowHead[] = [
+  'none',
+  'arrow',
+  'open',
+  'triangle',
+  'diamond',
+  'filledDiamond',
+  'circle',
+  'one',
+  'zeroOrOne',
+  'many',
+  'zeroOrMany',
+];
+
+/** Вид стрелки, который выбирают на панели: линия, наконечники и пунктир. */
+export interface ArrowStyle {
+  route: ArrowRoute;
+  startHead: ArrowHead;
+  endHead: ArrowHead;
+  dashed: boolean;
+}
+
+/** Так выглядят новые стрелки и стрелки, нарисованные до появления наконечников. */
+export const DEFAULT_ARROW_STYLE: ArrowStyle = Object.freeze({
+  route: 'straight',
+  startHead: 'none',
+  endHead: 'arrow',
+  dashed: false,
+});
+
 /** Страница, на которой лежат элементы, нарисованные до появления страниц. */
 export const DEFAULT_PAGE = 'main';
 
@@ -55,13 +104,14 @@ export interface ArrowEnd {
   shapeId?: string;
 }
 
-export interface ArrowElement {
+export interface ArrowElement extends ArrowStyle {
   id: string;
   kind: 'arrow';
   page: string;
   start: ArrowEnd;
   end: ArrowEnd;
-  route: ArrowRoute;
+  /** Подпись посередине линии. */
+  text: string;
   stroke: string;
   z: number;
 }

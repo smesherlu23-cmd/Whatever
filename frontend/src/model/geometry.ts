@@ -1,3 +1,4 @@
+import { LABEL_FONT_SIZE, estimateMeasure, labelLayout } from './textLayout';
 import type { ArrowElement, BoardElement, Bounds, Point, ShapeElement } from './types';
 import { isArrow } from './types';
 
@@ -41,6 +42,22 @@ export function boundsOf(points: readonly Point[]): Bounds {
 
 export function center(b: Bounds): Point {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+}
+
+/** Наименьшая рамка, содержащая обе рамки. */
+export function union(a: Bounds, b: Bounds): Bounds {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return {
+    x,
+    y,
+    w: Math.max(a.x + a.w, b.x + b.w) - x,
+    h: Math.max(a.y + a.h, b.y + b.h) - y,
+  };
+}
+
+export function inside(p: Point, b: Bounds): boolean {
+  return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 }
 
 export function intersects(a: Bounds, b: Bounds): boolean {
@@ -227,6 +244,33 @@ export function arrowPath(arrow: ArrowElement, lookup: ElementLookup): ArrowPath
   };
 }
 
+/**
+ * Точка подписи стрелки: середина пути вдоль линии. У ровной ломаной из трёх участков
+ * это середина среднего, соединяющего участка.
+ */
+export function labelAnchor(path: ArrowPath): Point {
+  const legs = [...segments(pathVertices(path))];
+  let rest = legs.reduce((sum, [a, b]) => sum + distance(a, b), 0) / 2;
+  for (const [a, b] of legs) {
+    const length = distance(a, b);
+    if (length > 0 && rest <= length) {
+      const t = rest / length;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    rest -= length;
+  }
+  return path.start;
+}
+
+/**
+ * Рамка подписи стрелки или null, если подписи нет. Ширина текста здесь оценочная:
+ * для попадания указателем и для границ элемента точность холста не нужна.
+ */
+export function arrowLabelBounds(arrow: ArrowElement, path: ArrowPath): Bounds | null {
+  if (!arrow.text) return null;
+  return labelLayout(arrow.text, labelAnchor(path), estimateMeasure(LABEL_FONT_SIZE)).box;
+}
+
 /** Реальные координаты концов стрелки. */
 export function resolveArrow(
   arrow: ArrowElement,
@@ -238,7 +282,10 @@ export function resolveArrow(
 
 export function elementBounds(el: BoardElement, lookup: ElementLookup): Bounds {
   if (!isArrow(el)) return { x: el.x, y: el.y, w: el.w, h: el.h };
-  return boundsOf(pathVertices(arrowPath(el, lookup)));
+  const path = arrowPath(el, lookup);
+  const line = boundsOf(pathVertices(path));
+  const label = arrowLabelBounds(el, path);
+  return label ? union(line, label) : line;
 }
 
 /** Точки рукописного штриха в мировых координатах. */
@@ -271,10 +318,12 @@ export function hitTest(
   tolerance: number,
 ): boolean {
   if (isArrow(el)) {
-    for (const [a, b] of segments(pathVertices(arrowPath(el, lookup)))) {
+    const path = arrowPath(el, lookup);
+    for (const [a, b] of segments(pathVertices(path))) {
       if (distanceToSegment(p, a, b) <= tolerance) return true;
     }
-    return false;
+    const label = arrowLabelBounds(el, path);
+    return label !== null && inside(p, label);
   }
   if (el.kind === 'path') {
     for (const [a, b] of segments(pathPoints(el))) {

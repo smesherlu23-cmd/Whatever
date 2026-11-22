@@ -5,6 +5,7 @@ import { bindTargetAt, isConnectable } from '../model/queries';
 import {
   type ArrowEnd,
   type BoardElement,
+  DEFAULT_ARROW_STYLE,
   DEFAULT_FILL,
   DEFAULT_STROKE,
   type Point,
@@ -76,7 +77,17 @@ function toElement(
     const straight = straightenLine(result.start, result.end);
     const start: ArrowEnd = from ? { ...result.start, shapeId: from.id } : straight.start;
     const end: ArrowEnd = to ? { ...result.end, shapeId: to.id } : straight.end;
-    return { id, kind: 'arrow', page, start, end, route: 'straight', stroke: DEFAULT_STROKE, z };
+    return {
+      id,
+      kind: 'arrow',
+      page,
+      start,
+      end,
+      text: '',
+      ...DEFAULT_ARROW_STYLE,
+      stroke: DEFAULT_STROKE,
+      z,
+    };
   }
 
   const neighbours = source

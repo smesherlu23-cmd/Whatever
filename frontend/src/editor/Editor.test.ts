@@ -48,12 +48,12 @@ describe('Editor', () => {
 
   it('draws elbow arrows and switches selected arrows in one undo step', () => {
     const editor = new Editor();
-    editor.setArrowRoute('elbow');
+    editor.setArrowStyle({ route: 'elbow' });
     editor.setTool('arrow');
     drag(editor, [0, 0], [200, 100]);
     // Новая стрелка остаётся выделенной: снимаем выделение, чтобы не переключить и её.
     editor.select([]);
-    editor.setArrowRoute('straight');
+    editor.setArrowStyle({ route: 'straight' });
     editor.setTool('arrow');
     drag(editor, [0, 300], [200, 400]);
     const [elbow, straight] = takeTwo(arrows(editor.doc));
@@ -61,15 +61,47 @@ describe('Editor', () => {
     expect(straight.route).toBe('straight');
 
     editor.select([elbow.id, straight.id]);
-    expect(editor.getState().selectionRoute).toBe('mixed');
-    editor.setArrowRoute('elbow');
+    expect(editor.getState().selectionArrowStyle).toMatchObject({ route: null, endHead: 'arrow' });
+    editor.setArrowStyle({ route: 'elbow' });
     expect(arrows(editor.doc).map((a) => a.route)).toEqual(['elbow', 'elbow']);
-    expect(editor.getState().selectionRoute).toBe('elbow');
+    expect(editor.getState().selectionArrowStyle?.route).toBe('elbow');
     editor.undo();
     expect(arrows(editor.doc).map((a) => a.route)).toEqual(['elbow', 'straight']);
 
     editor.select([]);
-    expect(editor.getState().selectionRoute).toBeNull();
+    expect(editor.getState().selectionArrowStyle).toBeNull();
+  });
+
+  it('draws new arrows with the chosen heads and dash, and restyles selected ones', () => {
+    const editor = new Editor();
+    editor.setArrowStyle({ startHead: 'diamond', endHead: 'open', dashed: true });
+    editor.setTool('arrow');
+    drag(editor, [0, 0], [200, 0]);
+    const arrow = defined(arrows(editor.doc)[0]);
+    expect(arrow).toMatchObject({ startHead: 'diamond', endHead: 'open', dashed: true, text: '' });
+
+    const before = editor.getState().selectionArrowStyle;
+    editor.pointerMove({ x: 5, y: 5 });
+    // Пока вид выделенных стрелок тот же, состояние отдаёт тот же объект.
+    expect(editor.getState().selectionArrowStyle).toBe(before);
+    editor.setArrowStyle({ endHead: 'triangle' });
+    expect(editor.doc.get(arrow.id)).toMatchObject({ endHead: 'triangle', startHead: 'diamond' });
+    expect(editor.arrowStyle).toMatchObject({ endHead: 'triangle', dashed: true });
+  });
+
+  it('edits the label of an arrow on double click', () => {
+    const editor = new Editor();
+    editor.setTool('arrow');
+    drag(editor, [0, 0], [200, 0]);
+    const arrow = defined(arrows(editor.doc)[0]);
+    editor.select([]);
+    editor.doubleClick({ x: 100, y: 1 });
+    expect(editor.editingId).toBe(arrow.id);
+    editor.setEditingText('HTTPS');
+    editor.stopEditing();
+    expect(editor.doc.get(arrow.id)).toMatchObject({ text: 'HTTPS' });
+    // По подписи теперь тоже можно попасть, даже если она шире линии.
+    expect(editor.elementAt({ x: 100, y: 8 })?.id).toBe(arrow.id);
   });
 
   it('moves the selection and undoes the whole drag in one step', () => {
@@ -242,7 +274,7 @@ describe('Editor in read-only mode', () => {
     expect(editor.editingId).toBeNull();
     editor.deleteSelection();
     editor.duplicateSelection();
-    editor.setArrowRoute('elbow');
+    editor.setArrowStyle({ route: 'elbow' });
     editor.undo();
     expect(editor.keyDown({ key: 'Delete' })).toBe(true);
     expect(editor.doc.list()).toEqual(before);

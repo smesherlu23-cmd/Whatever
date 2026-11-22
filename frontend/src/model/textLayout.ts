@@ -2,11 +2,42 @@
  * Размеры текста в фигурах (в мировых единицах). Общие для холста и поля редактирования,
  * чтобы текст при вводе стоял ровно там же, где потом нарисуется.
  */
-import type { Bounds, ShapeElement } from '../model/types';
+import type { Bounds, Point, ShapeElement } from './types';
 
 export const FONT_SIZE = 16;
 export const LINE_HEIGHT = 20;
 export const TEXT_PADDING = 8;
+
+/** Подпись стрелки мельче текста фигур и не шире LABEL_MAX_WIDTH. */
+export const LABEL_FONT_SIZE = 14;
+export const LABEL_LINE_HEIGHT = 18;
+export const LABEL_MAX_WIDTH = 200;
+export const LABEL_PADDING = 4;
+
+/** Средняя ширина символа в долях размера шрифта: для оценки ширины текста без холста. */
+const AVERAGE_CHAR_WIDTH = 0.56;
+
+export type Measure = (text: string) => number;
+
+/**
+ * Ширина текста без холста. Для попадания по подписи и для границ элемента хватает
+ * оценки, а рисует подпись холст по точным размерам.
+ */
+export function estimateMeasure(fontSize: number): Measure {
+  return (text) => text.length * fontSize * AVERAGE_CHAR_WIDTH;
+}
+
+/** Строки подписи стрелки и её рамка с полями вокруг точки anchor. */
+export function labelLayout(
+  text: string,
+  anchor: Point,
+  measure: Measure,
+): { lines: string[]; box: Bounds } {
+  const lines = wrapText(measure, text, LABEL_MAX_WIDTH);
+  const w = Math.max(...lines.map(measure)) + LABEL_PADDING * 2;
+  const h = lines.length * LABEL_LINE_HEIGHT + LABEL_PADDING * 2;
+  return { lines, box: { x: anchor.x - w / 2, y: anchor.y - h / 2, w, h } };
+}
 
 /** Разбивает текст на строки не шире maxWidth. Переносы строк из текста сохраняются. */
 export function wrapText(

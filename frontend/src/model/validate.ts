@@ -1,6 +1,9 @@
 import {
+  ARROW_HEADS,
   type ArrowEnd,
+  type ArrowHead,
   type BoardElement,
+  DEFAULT_ARROW_STYLE,
   DEFAULT_PAGE,
   type Page,
   type Point,
@@ -34,6 +37,10 @@ function isShapeKind(value: unknown): value is ShapeKind {
   return SHAPE_KINDS.some((kind) => kind === value);
 }
 
+function isArrowHead(value: unknown): value is ArrowHead {
+  return ARROW_HEADS.some((head) => head === value);
+}
+
 function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every(isNumber);
 }
@@ -57,11 +64,24 @@ export function parseElement(value: unknown): BoardElement | null {
   const page = isString(value.page) ? value.page : DEFAULT_PAGE;
   if (value.kind === 'arrow') {
     const { start, end } = value;
-    // У стрелок, нарисованных до появления ломаных, поля route нет: они прямые.
-    const route = value.route === 'elbow' ? 'elbow' : 'straight';
-    return isArrowEnd(start) && isArrowEnd(end)
-      ? { id, kind: 'arrow', page, start, end, route, stroke, z }
-      : null;
+    if (!isArrowEnd(start) || !isArrowEnd(end)) return null;
+    // У стрелок, нарисованных раньше, части полей нет: они выглядят как раньше —
+    // прямая сплошная линия с наконечником на конце и без подписи.
+    const defaults = DEFAULT_ARROW_STYLE;
+    return {
+      id,
+      kind: 'arrow',
+      page,
+      start,
+      end,
+      text: isString(value.text) ? value.text : '',
+      route: value.route === 'elbow' ? 'elbow' : 'straight',
+      startHead: isArrowHead(value.startHead) ? value.startHead : defaults.startHead,
+      endHead: isArrowHead(value.endHead) ? value.endHead : defaults.endHead,
+      dashed: value.dashed === true,
+      stroke,
+      z,
+    };
   }
   const { kind, x, y, w, h, text, fill, points } = value;
   if (!isShapeKind(kind) || !isNumber(x) || !isNumber(y) || !isNumber(w) || !isNumber(h)) {
