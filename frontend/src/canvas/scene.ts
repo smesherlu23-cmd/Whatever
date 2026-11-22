@@ -25,6 +25,7 @@ import {
 } from '../model/textLayout';
 import type { ArrowElement, ArrowHead, Bounds, Point, ShapeElement } from '../model/types';
 import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE, isArrow } from '../model/types';
+import type { ThemeName } from '../ui/theme';
 import { HEAD_SHAPES, drawHead } from './arrowHeads';
 
 /** Цвета и шрифт, которыми рисуется доска. Берутся из CSS-переменных темы. */
@@ -44,6 +45,19 @@ export interface Theme {
   placeholder: string;
   /** Семейство шрифта интерфейса: холст должен писать тем же шрифтом, что и разметка. */
   fontFamily: string;
+}
+
+/** Цвета темы name, какая бы тема ни была открыта сейчас: например, для экспорта. */
+export function themeFor(name: ThemeName): Theme {
+  const probe = document.createElement('div');
+  probe.dataset.theme = name;
+  probe.hidden = true;
+  document.body.append(probe);
+  try {
+    return readTheme(probe);
+  } finally {
+    probe.remove();
+  }
 }
 
 /** Тема элемента el: его CSS-переменные с учётом data-theme ближайшего предка. */

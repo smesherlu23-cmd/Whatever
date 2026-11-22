@@ -6,6 +6,7 @@ import { BoardSession, type ConnectionStatus } from '../collab/session';
 import controls from '../ui/controls.module.css';
 import { AppHeader } from './AppHeader';
 import { forgetAccess, rememberAccess, rememberedAccess } from './boardAccessCache';
+import { ExportDialog } from './board/ExportDialog';
 import { BoardView } from './BoardView';
 import { NotFoundPage } from './NotFoundPage';
 import styles from './pages.module.css';
@@ -27,6 +28,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const [status, setStatus] = useState<ConnectionStatus>(session.status);
   const [peers, setPeers] = useState<readonly Peer[]>([]);
   const [sharing, setSharing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const board = useBoardInfo(boardId, user.id, status === 'connected');
 
   useEffect(() => {
@@ -76,6 +78,14 @@ export function BoardPage({ boardId }: { boardId: string }) {
                     </li>
                   ))}
                 </ul>
+                <button
+                  type="button"
+                  className={controls.secondary}
+                  title="Сохранить страницу или выделенное картинкой PNG"
+                  onClick={() => setExporting(true)}
+                >
+                  Экспорт
+                </button>
                 {board.access && canManage(board.access) && (
                   <button
                     type="button"
@@ -102,6 +112,16 @@ export function BoardPage({ boardId }: { boardId: string }) {
           </AppHeader>
         }
       />
+      {exporting && (
+        <ExportDialog
+          editor={session.editor}
+          images={session.files.images}
+          boardName={board.info?.name ?? 'Доска'}
+          onClose={() => {
+            setExporting(false);
+          }}
+        />
+      )}
       {sharing && board.info && (
         <ShareDialog
           board={board.info}

@@ -331,6 +331,25 @@ export function elementBounds(el: BoardElement, lookup: ElementLookup): Bounds {
   return label ? union(line, label) : line;
 }
 
+/**
+ * Рамка всего, что видно у элементов, вместе с подписями, которые выходят за фигуру
+ * (события BPMN). null — элементов нет.
+ */
+export function contentBounds(
+  elements: readonly BoardElement[],
+  lookup: ElementLookup,
+): Bounds | null {
+  let result: Bounds | null = null;
+  for (const el of elements) {
+    let bounds = elementBounds(el, lookup);
+    if (!isArrow(el) && el.kind !== 'path' && el.text) {
+      bounds = union(bounds, shapeSpec(el.kind).textBox(el));
+    }
+    result = result ? union(result, bounds) : bounds;
+  }
+  return result;
+}
+
 /** Точки рукописного штриха в мировых координатах. */
 export function pathPoints(el: ShapeElement): Point[] {
   const flat = el.points ?? [];
