@@ -5,5 +5,5 @@
 !index.html
 !tsconfig.json
 !vite.config.ts
-!nginx.conf
+!nginx.conf.template
 !src/

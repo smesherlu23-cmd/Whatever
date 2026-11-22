@@ -13,7 +13,11 @@ RUN npm run build
 
 # ---------- Рабочий образ: nginx без прав root, слушает порт 8080 ----------
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Шаблон конфигурации: при запуске в него подставляются только переменные WHATEVER_*,
+# переменные самого nginx ($uri, $remote_addr) остаются как есть.
+ENV NGINX_ENVSUBST_FILTER=^WHATEVER_ \
+    WHATEVER_TRUSTED_PROXY=127.0.0.1
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \

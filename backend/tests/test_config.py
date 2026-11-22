@@ -9,8 +9,8 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
-# Переменные, которые читает docker compose, а не бэкенд.
-COMPOSE_ONLY = {"WHATEVER_PORT"}
+# Переменные, которые читают docker compose и nginx, а не бэкенд.
+NOT_FOR_BACKEND = {"WHATEVER_PORT", "WHATEVER_TRUSTED_PROXY"}
 
 
 def env_names() -> set[str]:
@@ -28,7 +28,7 @@ def documented_names() -> set[str]:
 
 
 def test_env_example_documents_every_setting() -> None:
-    assert documented_names() - COMPOSE_ONLY == env_names()
+    assert documented_names() - NOT_FOR_BACKEND == env_names()
 
 
 def test_password_with_special_characters_is_escaped_in_the_url() -> None:
