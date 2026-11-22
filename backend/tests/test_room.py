@@ -9,22 +9,22 @@ import pytest
 from pycrdt import Doc, Map, create_sync_message, create_update_message
 from sqlalchemy import delete, func, select
 
-from app.db import dispose_engine, session_factory
+from app.core.config import get_settings
+from app.core.db import Database, Sessions
 from app.models import Board, BoardUpdate
-from app.sync import room as room_module
-from app.sync.room import COMPACT_AFTER, Connection, Room, RoomManager
+from app.sync.room import Connection, Room, RoomManager, SavePolicy
 
-
-@pytest.fixture(autouse=True)
-async def fresh_engine() -> AsyncIterator[None]:
-    # У каждого асинхронного теста свой цикл событий, а пул соединений привязан к циклу.
-    yield
-    await dispose_engine()
+COMPACT_AFTER = 50
+# Запись почти без задержки: тесты ждут её доли секунды.
+POLICY = SavePolicy(delay=0.01, compact_after=COMPACT_AFTER)
 
 
 @pytest.fixture
-def fast_saves(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(room_module, "SAVE_DELAY_SECONDS", 0.01)
+async def sessions() -> AsyncIterator[Sessions]:
+    # У каждого асинхронного теста свой цикл событий, а пул соединений привязан к циклу.
+    database = Database(get_settings())
+    yield database.sessions
+    await database.dispose()
 
 
 class Recorder:
@@ -51,82 +51,82 @@ class Editor:
         return update
 
 
-async def new_board() -> uuid.UUID:
-    async with session_factory()() as session:
+async def new_board(sessions: Sessions) -> uuid.UUID:
+    async with sessions() as session:
         board = Board(name="Тест")
         session.add(board)
         await session.commit()
         return board.id
 
 
-async def stored_updates(board_id: uuid.UUID) -> int:
-    async with session_factory()() as session:
+async def stored_updates(sessions: Sessions, board_id: uuid.UUID) -> int:
+    async with sessions() as session:
         count = await session.scalar(select(func.count()).where(BoardUpdate.board_id == board_id))
         return count or 0
 
 
-async def store_history(board_id: uuid.UUID, editor: Editor, size: int) -> None:
-    async with session_factory()() as session:
+async def store_history(sessions: Sessions, board_id: uuid.UUID, editor: Editor, size: int) -> None:
+    async with sessions() as session:
         session.add_all(
             BoardUpdate(board_id=board_id, data=editor.set(f"shape-{i}", i)) for i in range(size)
         )
         await session.commit()
 
 
-async def restored(board_id: uuid.UUID) -> dict[str, Any]:
-    room = Room(board_id, session_factory())
+async def restored(sessions: Sessions, board_id: uuid.UUID) -> dict[str, Any]:
+    room = Room(board_id, sessions, POLICY)
     await room.load()
     elements: dict[str, Any] = room.doc.get("elements", type=Map).to_py()
     return elements
 
 
-@pytest.mark.usefixtures("fast_saves")
-async def test_changes_are_saved_in_one_batch() -> None:
-    board_id = await new_board()
+async def test_changes_are_saved_in_one_batch(sessions: Sessions) -> None:
+    board_id = await new_board(sessions)
     editor = Editor()
-    rooms = RoomManager(session_factory)
+    rooms = RoomManager(sessions, POLICY)
     async with rooms.connect(board_id, Connection(Recorder().send)) as room:
         conn = next(iter(room.connections))
         for i in range(20):
             await room.receive(conn, create_update_message(editor.set(f"shape-{i}", i)))
         await asyncio.sleep(0.1)
-        assert await stored_updates(board_id) == 1
-    assert len(await restored(board_id)) == 20
+        assert await stored_updates(sessions, board_id) == 1
+    assert len(await restored(sessions, board_id)) == 20
 
 
-async def test_history_is_compacted_when_the_room_closes() -> None:
-    board_id = await new_board()
-    await store_history(board_id, Editor(), COMPACT_AFTER + 10)
-    rooms = RoomManager(session_factory)
+async def test_history_is_compacted_when_the_room_closes(sessions: Sessions) -> None:
+    board_id = await new_board(sessions)
+    await store_history(sessions, board_id, Editor(), COMPACT_AFTER + 10)
+    rooms = RoomManager(sessions, POLICY)
     async with rooms.connect(board_id, Connection(Recorder().send)):
         pass
-    assert await stored_updates(board_id) == 1
-    assert len(await restored(board_id)) == COMPACT_AFTER + 10
+    assert await stored_updates(sessions, board_id) == 1
+    assert len(await restored(sessions, board_id)) == COMPACT_AFTER + 10
 
 
-async def test_failed_load_keeps_the_history(monkeypatch: pytest.MonkeyPatch) -> None:
-    board_id = await new_board()
-    await store_history(board_id, Editor(), COMPACT_AFTER + 10)
+async def test_failed_load_keeps_the_history(
+    sessions: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board_id = await new_board(sessions)
+    await store_history(sessions, board_id, Editor(), COMPACT_AFTER + 10)
 
     async def broken_load(self: Room) -> None:
         raise ConnectionError("database is down")
 
     monkeypatch.setattr(Room, "load", broken_load)
-    rooms = RoomManager(session_factory)
+    rooms = RoomManager(sessions, POLICY)
     with pytest.raises(ConnectionError):
         async with rooms.connect(board_id, Connection(Recorder().send)):
             pass
     assert rooms.open_rooms() == 0
 
     monkeypatch.undo()
-    assert await stored_updates(board_id) == COMPACT_AFTER + 10
+    assert await stored_updates(sessions, board_id) == COMPACT_AFTER + 10
     async with rooms.connect(board_id, Connection(Recorder().send)) as room:
         assert len(room.doc.get("elements", type=Map).to_py()) == COMPACT_AFTER + 10
 
 
-@pytest.mark.usefixtures("fast_saves")
-async def test_failed_save_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    board_id = await new_board()
+async def test_failed_save_is_retried(sessions: Sessions, monkeypatch: pytest.MonkeyPatch) -> None:
+    board_id = await new_board(sessions)
     editor = Editor()
     original = Room._persist
     failures = 0
@@ -139,19 +139,19 @@ async def test_failed_save_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
         await original(self, data)
 
     monkeypatch.setattr(Room, "_persist", flaky_persist)
-    rooms = RoomManager(session_factory)
+    rooms = RoomManager(sessions, POLICY)
     async with rooms.connect(board_id, Connection(Recorder().send)) as room:
         conn = next(iter(room.connections))
         await room.receive(conn, create_update_message(editor.set("shape", 1)))
         await asyncio.sleep(0.1)
         assert failures == 1
-        assert await stored_updates(board_id) == 1
+        assert await stored_updates(sessions, board_id) == 1
 
 
-async def test_a_new_participant_receives_the_document_state() -> None:
-    board_id = await new_board()
+async def test_a_new_participant_receives_the_document_state(sessions: Sessions) -> None:
+    board_id = await new_board(sessions)
     first, second = Recorder(), Recorder()
-    rooms = RoomManager(session_factory)
+    rooms = RoomManager(sessions, POLICY)
     async with rooms.connect(board_id, Connection(first.send)):
         async with rooms.connect(board_id, Connection(second.send)) as room:
             assert len(room.connections) == 2
@@ -160,10 +160,10 @@ async def test_a_new_participant_receives_the_document_state() -> None:
     assert rooms.open_rooms() == 0
 
 
-async def test_read_only_connection_cannot_change_the_document() -> None:
-    board_id = await new_board()
+async def test_read_only_connection_cannot_change_the_document(sessions: Sessions) -> None:
+    board_id = await new_board(sessions)
     editor, viewer_inbox, other_inbox = Editor(), Recorder(), Recorder()
-    rooms = RoomManager(session_factory)
+    rooms = RoomManager(sessions, POLICY)
     viewer = Connection(viewer_inbox.send, can_edit=False)
     async with (
         rooms.connect(board_id, Connection(other_inbox.send)),
@@ -177,17 +177,17 @@ async def test_read_only_connection_cannot_change_the_document() -> None:
         viewer_inbox.messages.clear()
         await room.receive(viewer, create_sync_message(editor.doc))
         assert viewer_inbox.messages
-    assert await stored_updates(board_id) == 0
+    assert await stored_updates(sessions, board_id) == 0
 
 
-async def test_discarded_room_does_not_write_to_a_deleted_board() -> None:
-    board_id = await new_board()
+async def test_discarded_room_does_not_write_to_a_deleted_board(sessions: Sessions) -> None:
+    board_id = await new_board(sessions)
     editor = Editor()
-    rooms = RoomManager(session_factory)
+    rooms = RoomManager(sessions, POLICY)
     async with rooms.connect(board_id, Connection(Recorder().send)) as room:
         conn = next(iter(room.connections))
         await room.receive(conn, create_update_message(editor.set("shape", 1)))
-        async with session_factory()() as session:
+        async with sessions() as session:
             await session.execute(delete(Board).where(Board.id == board_id))
             await session.commit()
         # Без discard закрытие комнаты попыталось бы записать изменение и упало бы

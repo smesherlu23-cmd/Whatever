@@ -8,7 +8,7 @@ import uuid
 from enum import StrEnum
 
 from sqlalchemy import or_, select
-from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -95,8 +95,6 @@ async def grant(
     (например, ссылку открыли дважды) не столкнутся. С upgrade_only уже выданное более
     сильное право не понижается.
     """
-    dialect = db.get_bind().dialect.name
-    insert = sqlite.insert if dialect == "sqlite" else postgresql.insert
     weaker = [r for r in BoardRole if not ROLE_ACCESS[r].allows(ROLE_ACCESS[role])]
     await db.execute(
         insert(BoardMember)

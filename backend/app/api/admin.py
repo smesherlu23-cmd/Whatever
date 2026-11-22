@@ -11,7 +11,7 @@ from app.api.schemas import Login, Password, PersonName, UserOut
 from app.auth.dependencies import AdminUser, OpenSockets, admin_user
 from app.auth.passwords import hash_password
 from app.auth.sessions import delete_user_sessions
-from app.db import DbSession
+from app.core.db import DbSession
 from app.models import Role, User
 
 router = APIRouter(prefix="/admin/users", tags=["admin"], dependencies=[Depends(admin_user)])

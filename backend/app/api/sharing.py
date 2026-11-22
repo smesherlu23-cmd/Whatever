@@ -14,7 +14,7 @@ from app.access import ROLE_ACCESS, Access, grant, manages, member_role
 from app.api.boards import BoardOut, board_out
 from app.api.schemas import Person
 from app.auth.dependencies import CurrentUser, ManagedBoard, OpenSockets
-from app.db import DbSession, as_utc
+from app.core.db import DbSession
 from app.models import Board, BoardMember, BoardRole, ShareLink, User
 
 router = APIRouter(tags=["sharing"])
@@ -152,7 +152,7 @@ async def join_by_link(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Ссылка не действует: её удалили или в адресе ошибка"
         )
-    if link.expires_at is not None and as_utc(link.expires_at) <= datetime.now(UTC):
+    if link.expires_at is not None and link.expires_at <= datetime.now(UTC):
         raise HTTPException(
             status.HTTP_410_GONE, "Срок действия ссылки истёк. Попросите владельца прислать новую."
         )

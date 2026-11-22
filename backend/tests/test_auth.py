@@ -3,12 +3,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.sessions import COOKIE_NAME
-from app.auth.throttle import MAX_FAILURES
-from app.db import session_factory
+from app.core.config import get_settings
 from app.models import Session
-from tests.conftest import PASSWORD, create_user, log_in
+from tests.conftest import PASSWORD, create_user, in_app_db, log_in
 
 
 def test_login_sets_a_protected_session_cookie(anon_client: TestClient) -> None:
@@ -53,7 +53,7 @@ def test_logout_ends_the_session(client: TestClient) -> None:
 
 def test_password_guessing_is_slowed_down(anon_client: TestClient) -> None:
     login = create_user(anon_client)
-    for _ in range(MAX_FAILURES):
+    for _ in range(get_settings().login_max_failures):
         anon_client.post("/api/auth/login", json={"login": login, "password": "guess"})
     blocked = anon_client.post("/api/auth/login", json={"login": login, "password": PASSWORD})
     assert blocked.status_code == 429
@@ -90,13 +90,11 @@ def test_new_password_must_be_long_enough(client: TestClient) -> None:
 
 
 def test_expired_session_is_rejected(client: TestClient) -> None:
-    async def expire_all() -> None:
-        async with session_factory()() as db:
-            await db.execute(update(Session).values(expires_at=datetime.now(UTC) - timedelta(1)))
-            await db.commit()
+    async def expire_all(db: AsyncSession) -> None:
+        await db.execute(update(Session).values(expires_at=datetime.now(UTC) - timedelta(1)))
+        await db.commit()
 
-    assert client.portal is not None
-    client.portal.call(expire_all)
+    in_app_db(client, expire_all)
     assert client.get("/api/boards").status_code == 401
 
 

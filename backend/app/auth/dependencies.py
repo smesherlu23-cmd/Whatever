@@ -13,7 +13,8 @@ from starlette.requests import HTTPConnection
 from app.access import Access, access_to
 from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.auth.throttle import LoginThrottle
-from app.db import DbSession
+from app.core.config import Settings
+from app.core.db import DbSession
 from app.models import Board, Role, User
 from app.sync.room import RoomManager
 from app.sync.sockets import BoardSockets
@@ -43,9 +44,17 @@ async def same_origin(connection: HTTPConnection) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос с чужого сайта отклонён")
 
 
-async def current_user(request: Request, db: DbSession) -> User:
+def app_settings(connection: HTTPConnection) -> Settings:
+    settings: Settings = connection.app.state.settings
+    return settings
+
+
+AppSettings = Annotated[Settings, Depends(app_settings)]
+
+
+async def current_user(request: Request, db: DbSession, settings: AppSettings) -> User:
     token = request.cookies.get(COOKIE_NAME)
-    user = await user_for_token(db, token) if token else None
+    user = await user_for_token(db, token, settings.session_ttl) if token else None
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Нужно войти в систему")
     return user

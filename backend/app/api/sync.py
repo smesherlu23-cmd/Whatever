@@ -1,3 +1,5 @@
+"""WebSocket синхронизации доски: проверка входа и прав, затем подключение к комнате."""
+
 import uuid
 from dataclasses import dataclass
 
@@ -6,7 +8,8 @@ from fastapi import APIRouter, WebSocket
 from app.access import Access, access_to
 from app.auth.dependencies import is_same_origin
 from app.auth.sessions import COOKIE_NAME, user_for_token
-from app.db import session_factory
+from app.core.config import Settings
+from app.core.db import Database
 from app.models import Board
 from app.sync.room import Connection, RoomManager
 from app.sync.sockets import BOARD_NOT_FOUND, FORBIDDEN, NOT_AUTHENTICATED, BoardSockets
@@ -32,9 +35,14 @@ async def _admit(websocket: WebSocket, board_id: uuid.UUID) -> _Admitted:
     if not is_same_origin(websocket):
         raise _RejectedError(FORBIDDEN)
     token = websocket.cookies.get(COOKIE_NAME)
-    async with session_factory()() as session:
-        user = await user_for_token(session, token) if token else None
-        if token is None or user is None:
+    if token is None:
+        raise _RejectedError(NOT_AUTHENTICATED)
+    database: Database = websocket.app.state.database
+    settings: Settings = websocket.app.state.settings
+    # Сессия базы нужна только на время проверки: подключение к доске живёт часами.
+    async with database.sessions() as session:
+        user = await user_for_token(session, token, settings.session_ttl)
+        if user is None:
             raise _RejectedError(NOT_AUTHENTICATED)
         board = await session.get(Board, board_id)
         if board is None:

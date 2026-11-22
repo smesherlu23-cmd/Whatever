@@ -8,8 +8,6 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.db import as_utc
 from app.models import Session, User
 
 COOKIE_NAME = "whatever_session"
@@ -20,27 +18,18 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _ttl() -> timedelta:
-    return timedelta(days=get_settings().session_ttl_days)
-
-
-async def create_session(db: AsyncSession, user: User) -> str:
-    """Создаёт сессию и возвращает токен для cookie. Сам токен в базе не хранится."""
+async def create_session(db: AsyncSession, user: User, ttl: timedelta) -> str:
+    """Создаёт сессию на срок ttl и возвращает токен для cookie. Сам токен в базе не хранится."""
     now = datetime.now(UTC)
     # Заодно убираем истёкшие сессии, чтобы таблица не росла бесконечно.
     await db.execute(delete(Session).where(Session.expires_at < now))
     token = secrets.token_urlsafe(32)
-    db.add(Session(token_hash=token_hash(token), user_id=user.id, expires_at=now + _ttl()))
+    db.add(Session(token_hash=token_hash(token), user_id=user.id, expires_at=now + ttl))
     await db.commit()
     return token
 
 
-def session_max_age() -> int:
-    """Срок жизни cookie в секундах."""
-    return int(_ttl().total_seconds())
-
-
-async def user_for_token(db: AsyncSession, token: str) -> User | None:
+async def user_for_token(db: AsyncSession, token: str, ttl: timedelta) -> User | None:
     """Пользователь по токену сессии или None, если сессия истекла или пользователь заблокирован.
 
     Срок сессии продлевается, когда прошла половина: активные пользователи не выходят
@@ -57,13 +46,12 @@ async def user_for_token(db: AsyncSession, token: str) -> User | None:
         return None
     session, user = row
     now = datetime.now(UTC)
-    expires_at = as_utc(session.expires_at)
-    if expires_at <= now or not user.is_active:
+    if session.expires_at <= now or not user.is_active:
         await db.delete(session)
         await db.commit()
         return None
-    if expires_at - now < _ttl() / 2:
-        session.expires_at = now + _ttl()
+    if session.expires_at - now < ttl / 2:
+        session.expires_at = now + ttl
         await db.commit()
     return user
 

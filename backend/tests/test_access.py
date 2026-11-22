@@ -5,10 +5,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import session_factory
 from app.models import Role, ShareLink
-from tests.conftest import Account, act_as, sign_in
+from tests.conftest import Account, act_as, in_app_db, sign_in
 
 
 def new_board(client: TestClient, name: str = "Схема") -> dict[str, Any]:
@@ -170,16 +170,14 @@ def test_an_expired_link_stops_working(anon_client: TestClient) -> None:
     links = f"/api/boards/{board['id']}/links"
     token = client.post(links, json={"expires_in_days": 1}).json()["token"]
 
-    async def expire() -> None:
-        async with session_factory()() as db:
-            yesterday = datetime.now(UTC) - timedelta(days=1)
-            await db.execute(
-                update(ShareLink).where(ShareLink.token == token).values(expires_at=yesterday)
-            )
-            await db.commit()
+    async def expire(db: AsyncSession) -> None:
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        await db.execute(
+            update(ShareLink).where(ShareLink.token == token).values(expires_at=yesterday)
+        )
+        await db.commit()
 
-    assert client.portal is not None
-    client.portal.call(expire)
+    in_app_db(client, expire)
     assert client.get(f"/api/boards/{board['id']}/access").json()["links"] == []
     # Новая ссылка заодно убирает истёкшие.
     client.post(links, json={})
@@ -196,17 +194,15 @@ def test_expired_link_is_reported_as_expired(anon_client: TestClient) -> None:
         "token"
     ]
 
-    async def expire() -> None:
-        async with session_factory()() as db:
-            await db.execute(
-                update(ShareLink)
-                .where(ShareLink.token == token)
-                .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
-            )
-            await db.commit()
+    async def expire(db: AsyncSession) -> None:
+        await db.execute(
+            update(ShareLink)
+            .where(ShareLink.token == token)
+            .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+        await db.commit()
 
-    assert client.portal is not None
-    client.portal.call(expire)
+    in_app_db(client, expire)
     sign_in(client)
     response = client.post(f"/api/links/{token}/join")
     assert response.status_code == 410
