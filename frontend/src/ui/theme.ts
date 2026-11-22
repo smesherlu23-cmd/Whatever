@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from 'react';
+import { storageKeys } from '../config';
 
 export type ThemeName = 'light' | 'dark';
 
-const STORAGE_KEY = 'whatever-theme';
 const darkQuery = (): MediaQueryList | null =>
   typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-color-scheme: dark)')
@@ -10,7 +10,7 @@ const darkQuery = (): MediaQueryList | null =>
 const listeners = new Set<() => void>();
 
 function savedTheme(): ThemeName | null {
-  const value = localStorage.getItem(STORAGE_KEY);
+  const value = localStorage.getItem(storageKeys.theme);
   return value === 'light' || value === 'dark' ? value : null;
 }
 
@@ -25,7 +25,7 @@ function apply(): void {
 }
 
 export function setTheme(theme: ThemeName): void {
-  localStorage.setItem(STORAGE_KEY, theme);
+  localStorage.setItem(storageKeys.theme, theme);
   apply();
 }
 

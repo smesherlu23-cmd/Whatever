@@ -1,3 +1,5 @@
+import { API_BASE, SYNC_PATH } from './config';
+
 /** Что пользователь может делать с доской. Каждый уровень включает предыдущие. */
 export type Access = 'view' | 'edit' | 'manage';
 
@@ -124,7 +126,7 @@ async function send(path: string, { method, body, signIn = false }: RequestOptio
     init.headers = { 'Content-Type': 'application/json' };
     init.body = JSON.stringify(body);
   }
-  const response = await fetch(`/api${path}`, init);
+  const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
     if (response.status === 401 && !signIn) reportSignedOut();
     throw new ApiError(response.status, await readDetail(response), response.statusText);
@@ -214,7 +216,7 @@ export const api = {
 /** Адрес WebSocket-синхронизации на том же хосте, что и приложение. */
 export function syncUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/boards`;
+  return `${protocol}//${window.location.host}${SYNC_PATH}`;
 }
 
 /** Ссылка доступа, которую можно отправить коллеге. */

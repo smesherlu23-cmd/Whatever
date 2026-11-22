@@ -1,4 +1,5 @@
 import type { Access } from '../api';
+import { storageKeys } from '../config';
 
 /*
  * Права на открытые раньше доски. Без сети сервер не спросить, а открыть доску из локальной
@@ -8,17 +9,15 @@ import type { Access } from '../api';
 
 const LEVELS: readonly Access[] = ['view', 'edit', 'manage'];
 
-const key = (userId: string, boardId: string) => `whatever-access-${userId}-${boardId}`;
-
 export function rememberAccess(userId: string, boardId: string, access: Access): void {
-  localStorage.setItem(key(userId, boardId), access);
+  localStorage.setItem(storageKeys.boardAccess(userId, boardId), access);
 }
 
 export function forgetAccess(userId: string, boardId: string): void {
-  localStorage.removeItem(key(userId, boardId));
+  localStorage.removeItem(storageKeys.boardAccess(userId, boardId));
 }
 
 export function rememberedAccess(userId: string, boardId: string): Access | null {
-  const saved = localStorage.getItem(key(userId, boardId));
+  const saved = localStorage.getItem(storageKeys.boardAccess(userId, boardId));
   return LEVELS.find((level) => level === saved) ?? null;
 }
