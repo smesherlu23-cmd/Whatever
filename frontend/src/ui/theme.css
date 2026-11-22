@@ -22,6 +22,7 @@
   --text-on-active: var(--gray-0);
   --canvas-bg: var(--gray-50);
   --canvas-grid: var(--gray-300);
+  --canvas-placeholder: var(--gray-100);
   --selection: var(--gray-700);
   --selection-fill: rgb(67 67 74 / 0.08);
   /* Цвета фигур по умолчанию. В документе хранится один цвет, а на экране он свой в каждой теме. */
@@ -49,6 +50,7 @@
   --text-on-active: var(--gray-900);
   --canvas-bg: var(--gray-900);
   --canvas-grid: var(--gray-700);
+  --canvas-placeholder: var(--gray-800);
   --selection: var(--gray-200);
   --selection-fill: rgb(222 222 226 / 0.08);
   --shape-stroke: var(--gray-200);

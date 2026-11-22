@@ -4,7 +4,7 @@ import { elementBounds, resolveArrow } from '../model/geometry';
 import { isArrow } from '../model/types';
 import { screenToWorld, worldToScreen } from './camera';
 import { drawGrid } from './grid';
-import { type Theme, drawScene, polyline } from './scene';
+import { type ImageLookup, type Theme, drawScene, polyline } from './scene';
 
 const HANDLE_PX = 8;
 const PEER_LABEL_FONT_SIZE = 12;
@@ -103,15 +103,23 @@ function drawPeers(
   ctx.restore();
 }
 
+/** Что нужно для кадра, кроме редактора. width и height — размер холста в CSS-пикселях. */
+export interface FrameOptions {
+  width: number;
+  height: number;
+  /** Сколько пикселей экрана в одном CSS-пикселе. */
+  dpr: number;
+  theme: Theme;
+  /** Другие участники: их курсоры и выделения. */
+  peers?: readonly Peer[];
+  images?: ImageLookup;
+}
+
 /** Полная перерисовка кадра. Рисуются только элементы, попавшие в видимую область. */
 export function renderBoard(
   ctx: CanvasRenderingContext2D,
   editor: Editor,
-  width: number,
-  height: number,
-  dpr: number,
-  theme: Theme,
-  peers: readonly Peer[] = [],
+  { width, height, dpr, theme, peers = [], images }: FrameOptions,
 ): void {
   const { camera } = editor;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -130,7 +138,7 @@ export function renderBoard(
     w: bottomRight.x - topLeft.x,
     h: bottomRight.y - topLeft.y,
   };
-  drawScene(ctx, editor.page, theme, { viewport, editingId: editor.editingId });
+  drawScene(ctx, editor.page, theme, { viewport, editingId: editor.editingId, images });
 
   drawPeers(ctx, editor, peers, dpr, theme);
   drawSelection(ctx, editor, theme);

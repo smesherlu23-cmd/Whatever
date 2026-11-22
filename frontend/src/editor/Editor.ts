@@ -11,7 +11,7 @@ import {
 } from '../model/geometry';
 import { newId } from '../model/ids';
 import { bindTargetAt, elementAt, hasText } from '../model/queries';
-import { type CatalogKind, SHAPES, shapeSpec } from '../model/shapes';
+import { type ToolKind, shapeSpec } from '../model/shapes';
 import {
   type ArrowElement,
   type ArrowEnd,
@@ -21,6 +21,7 @@ import {
   DEFAULT_ARROW_STYLE,
   DEFAULT_PAGE,
   DEFAULT_STROKE,
+  type FileRef,
   type Point,
   type ShapeElement,
   isArrow,
@@ -29,12 +30,18 @@ import { recognize } from '../recognition/recognize';
 import { type KeyInput, handleShortcut } from './shortcuts';
 import { commitStroke } from './smartDrawing';
 
-/** Фигуры, которые рисуются протягиванием рамки: все из каталога. */
-export type ShapeTool = CatalogKind;
+/** Фигуры, которые рисуются протягиванием рамки: все из каталога, кроме файлов. */
+export type ShapeTool = ToolKind;
 export type Tool = 'select' | 'pen' | 'arrow' | ShapeTool;
 
 function isShapeTool(tool: Tool): tool is ShapeTool {
-  return tool in SHAPES;
+  return tool !== 'select' && tool !== 'pen' && tool !== 'arrow';
+}
+
+/** Размер холста в экранных пикселях. */
+export interface ViewportSize {
+  width: number;
+  height: number;
 }
 
 /**
@@ -101,6 +108,8 @@ export class Editor {
   /** Страница, которую видно и правят. Остальные страницы редактор не трогает. */
   pageId: string;
   camera: Camera = initialCamera;
+  /** Размер холста. Его сообщает холст, пока он не показан — нули. */
+  viewport: ViewportSize = { width: 0, height: 0 };
   tool: Tool = 'select';
   selection = new Set<string>();
   editingId: string | null = null;
@@ -285,6 +294,16 @@ export class Editor {
   setCamera(camera: Camera): void {
     this.camera = camera;
     this.emit();
+  }
+
+  setViewport(size: ViewportSize): void {
+    this.viewport = size;
+    this.emit();
+  }
+
+  /** Середина видимой части холста в мировых координатах. */
+  viewportCenter(): Point {
+    return this.toWorld({ x: this.viewport.width / 2, y: this.viewport.height / 2 });
   }
 
   wheel(screen: Point, deltaX: number, deltaY: number, zoom: boolean): void {
@@ -608,11 +627,16 @@ export class Editor {
     });
   }
 
+  /**
+   * Тянет ручку размера. Картинка сохраняет пропорции, а с Shift тянется свободно;
+   * остальные фигуры наоборот.
+   */
   private resize(
     it: { id: string; handle: Handle; start: Bounds; origin: Point },
     world: Point,
-    keepRatio: boolean,
+    shift: boolean,
   ): void {
+    const keepRatio = shift !== (this.shape(it.id)?.kind === 'image');
     const dx = world.x - it.origin.x;
     const dy = world.y - it.origin.y;
     let { x, y, w, h } = it.start;
@@ -643,6 +667,12 @@ export class Editor {
       h = -h;
     }
     this.doc.update(it.id, { x, y, w: Math.max(w, MIN_SIZE), h: Math.max(h, MIN_SIZE) });
+  }
+
+  /** Файл картинки или вложения под указателем: его открывают двойным щелчком. */
+  attachmentAt(screen: Point): FileRef | undefined {
+    const hit = this.elementAt(this.toWorld(screen));
+    return hit && !isArrow(hit) ? hit.file : undefined;
   }
 
   doubleClick(screen: Point): void {
@@ -733,6 +763,20 @@ export class Editor {
     });
     this.doc.stopCapturing();
     this.selection = new Set(copies.map((el) => el.id));
+    this.emit();
+  }
+
+  /** Добавляет готовые элементы на открытую страницу одним шагом отмены и выделяет их. */
+  insert(elements: readonly BoardElement[]): void {
+    if (this.readOnly || elements.length === 0) return;
+    this.doc.stopCapturing();
+    this.doc.transact(() => {
+      for (const el of elements) this.doc.add(el);
+    });
+    this.doc.stopCapturing();
+    this.tool = 'select';
+    // Элементы могли встать на другую страницу: например, их вставили, пока открыта была она.
+    this.selection = new Set(elements.filter((el) => el.page === this.pageId).map((el) => el.id));
     this.emit();
   }
 

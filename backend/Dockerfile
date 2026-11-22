@@ -32,6 +32,9 @@ COPY alembic ./alembic
 COPY app ./app
 # Код принадлежит root и только читается: процесс не может изменить сам себя.
 RUN python -m compileall -q app alembic
+# Каталог файлов досок — единственное, куда процесс пишет. Пустой том compose при первом
+# подключении получает его владельца и права.
+RUN mkdir -p /var/lib/whatever/files && chown -R 10001:10001 /var/lib/whatever
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \

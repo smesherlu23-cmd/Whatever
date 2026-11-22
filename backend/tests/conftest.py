@@ -2,10 +2,13 @@
 
 Подключение берётся из тех же переменных POSTGRES_*, что и у приложения, но база отдельная —
 <POSTGRES_DB>_test. Её пересоздают при каждом запуске, поэтому данные разработки не пострадают.
+Файлы досок тесты пишут во временный каталог, который удаляется после запуска.
 """
 
 import asyncio
 import os
+import shutil
+import tempfile
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
@@ -30,8 +33,12 @@ BACKEND = Path(__file__).resolve().parents[1]
 PASSWORD = "correct-horse-battery"
 
 
-def pytest_configure() -> None:
-    """Переключает настройки на тестовую базу до того, как их прочтёт приложение."""
+FILES_DIR = pytest.StashKey[Path]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Переключает настройки на тестовую базу и временный каталог файлов до того,
+    как их прочтёт приложение."""
     try:
         settings = Settings()
     except ValidationError as error:
@@ -40,7 +47,16 @@ def pytest_configure() -> None:
             "POSTGRES_HOST в окружении или в .env (см. .env.example и make db)"
         ) from error
     os.environ["POSTGRES_DB"] = f"{settings.postgres_db}_test"
+    files = Path(tempfile.mkdtemp(prefix="whatever-files-"))
+    config.stash[FILES_DIR] = files
+    os.environ["WHATEVER_FILES_DIR"] = str(files)
     get_settings.cache_clear()
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    files = config.stash.get(FILES_DIR, None)
+    if files is not None:
+        shutil.rmtree(files, ignore_errors=True)
 
 
 async def _recreate_database(settings: Settings) -> None:

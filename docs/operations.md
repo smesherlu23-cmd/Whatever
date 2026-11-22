@@ -8,7 +8,7 @@
 | Сервис | Образ | Что делает |
 | --- | --- | --- |
 | `frontend` | nginx без прав root | отдаёт приложение, проксирует `/api` и `/ws` на бэкенд; единственный сервис, доступный снаружи |
-| `backend` | Python 3.12, uvicorn | API и синхронизация досок, один процесс |
+| `backend` | Python 3.12, uvicorn | API и синхронизация досок, один процесс; картинки и вложения досок — том `files-data` |
 | `migrate` | тот же, что `backend` | применяет миграции базы и завершается; бэкенд стартует после него |
 | `postgres` | PostgreSQL 16 | данные; том `postgres-data` |
 
@@ -108,17 +108,21 @@ docker compose up -d --build --wait --remove-orphans
 
 ## Резервное копирование
 
-Копия всей базы (доски, учётные записи, права) одним файлом:
+Данные лежат в двух местах: в базе (доски, учётные записи, права) и в томе `files-data`
+(картинки и вложения досок). Копируйте оба, сначала базу, потом файлы: тогда в копии
+будут все файлы, о которых знает база.
 
 ```bash
 docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > whatever-$(date +%F).dump
+docker compose exec -T backend tar -C /var/lib/whatever/files -cz . > whatever-files-$(date +%F).tar.gz
 ```
 
-Копию можно делать на работающем приложении. Для ежедневных копий — строка cron
-(`crontab -e`), которая хранит копии 14 дней:
+Копию можно делать на работающем приложении. Для ежедневных копий — строки cron
+(`crontab -e`), которые хранят копии 14 дней:
 
 ```cron
-0 3 * * * cd /opt/whatever && docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/whatever-$(date +\%F).dump && find backups -name '*.dump' -mtime +14 -delete
+0 3 * * * cd /opt/whatever && docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/whatever-$(date +\%F).dump && docker compose exec -T backend tar -C /var/lib/whatever/files -cz . > backups/whatever-files-$(date +\%F).tar.gz
+30 3 * * * cd /opt/whatever && find backups -name 'whatever-*' -mtime +14 -delete
 ```
 
 Храните копии не только на этом сервере.
@@ -128,6 +132,7 @@ docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES
 ```bash
 docker compose stop backend                 # чтобы никто не писал в базу
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < whatever-2026-11-22.dump
+docker compose run --rm --no-deps -T backend tar -C /var/lib/whatever/files -xz < whatever-files-2026-11-22.tar.gz
 docker compose start backend
 ```
 

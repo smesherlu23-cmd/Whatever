@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '../editor/Editor';
+import { DEFAULT_FILL, DEFAULT_STROKE, type FileRef, type Point } from '../model/types';
 import { shapes } from '../testing/helpers';
 import { Board } from './Board';
 
@@ -54,6 +55,64 @@ describe('Board', () => {
 
     fireEvent.keyDown(screen.getByLabelText('Поле'), { key: 'o', code: 'KeyO' });
     expect(editor.tool).toBe('rectangle');
+  });
+
+  it('takes files dropped on the canvas or pasted, and opens attachments', () => {
+    const editor = new Editor();
+    const file = { id: 'f1', name: 'план.pdf', size: 10, type: 'application/octet-stream' };
+    editor.doc.add({
+      id: 'c',
+      kind: 'file',
+      page: editor.pageId,
+      x: 0,
+      y: 0,
+      w: 260,
+      h: 72,
+      text: '',
+      stroke: DEFAULT_STROKE,
+      fill: DEFAULT_FILL,
+      z: 1,
+      file,
+    });
+    const onInsertFiles = vi.fn<(files: File[], at: Point) => void>();
+    const onOpenFile = vi.fn<(file: FileRef) => void>();
+    render(<Board editor={editor} onInsertFiles={onInsertFiles} onOpenFile={onOpenFile} />);
+    const canvas = screen.getByLabelText('Холст доски');
+    const dropped = new File(['x'], 'схема.png', { type: 'image/png' });
+    const transfer = { types: ['Files'], files: [dropped], dropEffect: 'none' };
+
+    const over = fireEvent.dragOver(canvas, { dataTransfer: transfer });
+    expect(over).toBe(false);
+    expect(transfer.dropEffect).toBe('copy');
+    // В jsdom нет DragEvent: координаты у события приходится задать вручную.
+    const drop = createEvent.drop(canvas, { dataTransfer: transfer });
+    Object.defineProperties(drop, { clientX: { value: 300 }, clientY: { value: 200 } });
+    fireEvent(canvas, drop);
+    expect(onInsertFiles).toHaveBeenLastCalledWith([dropped], { x: 300, y: 200 });
+
+    // Перетаскивание текста холст не трогает.
+    expect(fireEvent.dragOver(canvas, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+
+    editor.setViewport({ width: 800, height: 600 });
+    fireEvent.paste(window, { clipboardData: { files: [dropped] } });
+    expect(onInsertFiles).toHaveBeenLastCalledWith([dropped], { x: 400, y: 300 });
+    fireEvent.pointerMove(canvas, { clientX: 50, clientY: 60 });
+    fireEvent.paste(window, { clipboardData: { files: [dropped] } });
+    expect(onInsertFiles).toHaveBeenLastCalledWith([dropped], { x: 50, y: 60 });
+    fireEvent.pointerLeave(canvas);
+    fireEvent.paste(window, { clipboardData: { files: [] } });
+    expect(onInsertFiles).toHaveBeenCalledTimes(3);
+
+    fireEvent.doubleClick(canvas, { clientX: 100, clientY: 30 });
+    expect(onOpenFile).toHaveBeenCalledWith(file);
+  });
+
+  it('ignores files when nobody takes them', () => {
+    const editor = new Editor();
+    render(<Board editor={editor} />);
+    const canvas = screen.getByLabelText('Холст доски');
+    const transfer = { types: ['Files'], files: [new File(['x'], 'a.txt')] };
+    expect(fireEvent.dragOver(canvas, { dataTransfer: transfer })).toBe(true);
   });
 
   it('pans the camera with the wheel and zooms with Ctrl', () => {

@@ -9,7 +9,8 @@ import {
   pathPoints,
   pathVertices,
 } from '../model/geometry';
-import { type ShapeSpec, compartments, shapeSpec } from '../model/shapes';
+import { fileSummary } from '../model/files';
+import { type ShapeSpec, compartments, fileIconBox, shapeSpec } from '../model/shapes';
 import {
   FONT_SIZE,
   LABEL_FONT_SIZE,
@@ -37,6 +38,10 @@ export interface Theme {
   shapeStroke: string;
   shapeFill: string;
   stickyFill: string;
+  /** Второстепенный текст: размер файла, значок заглушки. */
+  muted: string;
+  /** Заглушка на месте картинки, пока она загружается. */
+  placeholder: string;
   /** Семейство шрифта интерфейса: холст должен писать тем же шрифтом, что и разметка. */
   fontFamily: string;
 }
@@ -55,6 +60,8 @@ export function readTheme(el: Element): Theme {
     shapeStroke: v('--shape-stroke'),
     shapeFill: v('--shape-fill'),
     stickyFill: v('--sticky-fill'),
+    muted: v('--text-muted'),
+    placeholder: v('--canvas-placeholder'),
     fontFamily: style.fontFamily,
   };
 }
@@ -74,6 +81,10 @@ const LINE_WIDTH = 1.5;
 const BOLD_LINE_WIDTH = 3.5;
 const DASH = [6, 5];
 const LABEL_RADIUS = 4;
+const FILE_SUMMARY_FONT_SIZE = 12;
+
+/** Картинка файла, готовая к отрисовке, или null, пока она не загружена. */
+export type ImageLookup = (fileId: string) => CanvasImageSource | null;
 
 export function polyline(ctx: CanvasRenderingContext2D, points: readonly Point[]): void {
   const [first, ...rest] = points;
@@ -95,9 +106,14 @@ function drawShape(
   el: ShapeElement,
   editing: boolean,
   theme: Theme,
+  images: ImageLookup | undefined,
 ): void {
   if (el.kind === 'path') {
     drawPath(ctx, el, theme);
+    return;
+  }
+  if (el.kind === 'image') {
+    drawPicture(ctx, el, theme, images);
     return;
   }
   const spec = shapeSpec(el.kind);
@@ -130,8 +146,66 @@ function drawShape(
     }
     ctx.setLineDash([]);
   }
-  if (spec.text === 'compartments') drawCompartments(ctx, el, editing, stroke, theme);
-  else if (!editing && el.text) drawText(ctx, el, spec, stroke, theme);
+  if (el.kind === 'file') drawFileLabel(ctx, el, stroke, theme);
+  else if (spec.text === 'compartments') drawCompartments(ctx, el, editing, stroke, theme);
+  else if (spec.text !== 'none' && !editing && el.text) drawText(ctx, el, spec, stroke, theme);
+}
+
+/** Картинка, а пока она загружается или если не загрузилась — заглушка того же размера. */
+function drawPicture(
+  ctx: CanvasRenderingContext2D,
+  el: ShapeElement,
+  theme: Theme,
+  images: ImageLookup | undefined,
+): void {
+  const picture = el.file && images ? images(el.file.id) : null;
+  if (picture) {
+    ctx.drawImage(picture, el.x, el.y, el.w, el.h);
+    return;
+  }
+  ctx.fillStyle = theme.placeholder;
+  ctx.fillRect(el.x, el.y, el.w, el.h);
+  // Значок картинки: рамка, горы и солнце.
+  const s = Math.min(48, el.w * 0.4, el.h * 0.5);
+  const x = el.x + (el.w - s) / 2;
+  const y = el.y + (el.h - s * 0.8) / 2;
+  const at = (fx: number, fy: number): [number, number] => [x + s * fx, y + s * fy];
+  ctx.strokeStyle = theme.muted;
+  ctx.lineWidth = LINE_WIDTH;
+  ctx.beginPath();
+  ctx.roundRect(x, y, s, s * 0.8, s * 0.08);
+  ctx.moveTo(...at(0.12, 0.68));
+  ctx.lineTo(...at(0.4, 0.38));
+  ctx.lineTo(...at(0.62, 0.6));
+  ctx.lineTo(...at(0.74, 0.48));
+  ctx.lineTo(...at(0.88, 0.68));
+  ctx.moveTo(...at(0.78, 0.24));
+  ctx.arc(...at(0.7, 0.24), s * 0.08, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+/** Имя файла и строка «PDF · 1,4 МБ» справа от значка карточки вложения. */
+function drawFileLabel(
+  ctx: CanvasRenderingContext2D,
+  el: ShapeElement,
+  color: string,
+  theme: Theme,
+): void {
+  if (!el.file) return;
+  const icon = fileIconBox(el);
+  const left = icon.x + icon.w + 12;
+  const room = el.x + el.w - TEXT_PADDING - left;
+  if (room <= 0) return;
+  const measure = (t: string) => ctx.measureText(t).width;
+  const middle = el.y + el.h / 2;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = color;
+  ctx.font = `600 ${SMALL_FONT_SIZE}px ${theme.fontFamily}`;
+  ctx.fillText(fit(measure, el.file.name, room), left, middle - 9);
+  ctx.fillStyle = theme.muted;
+  ctx.font = `${FILE_SUMMARY_FONT_SIZE}px ${theme.fontFamily}`;
+  ctx.fillText(fit(measure, fileSummary(el.file), room), left, middle + 10);
 }
 
 function drawText(
@@ -298,6 +372,8 @@ export interface SceneOptions {
   viewport?: Bounds;
   /** Текст этого элемента не рисуется: поверх него открыто поле ввода. */
   editingId?: string | null;
+  /** Картинки файлов. Без них на месте картинок рисуются заглушки. */
+  images?: ImageLookup;
 }
 
 /** Рисует элементы страницы в мировых координатах текущего преобразования холста. */
@@ -305,7 +381,7 @@ export function drawScene(
   ctx: CanvasRenderingContext2D,
   source: ElementSource,
   theme: Theme,
-  { viewport, editingId = null }: SceneOptions = {},
+  { viewport, editingId = null, images }: SceneOptions = {},
 ): void {
   const lookup = (id: string) => source.get(id);
   ctx.lineJoin = 'round';
@@ -314,6 +390,6 @@ export function drawScene(
     if (viewport && !intersects(viewport, elementBounds(el, lookup))) continue;
     const editing = el.id === editingId;
     if (isArrow(el)) drawArrow(ctx, el, arrowPath(el, lookup), editing, theme);
-    else drawShape(ctx, el, editing, theme);
+    else drawShape(ctx, el, editing, theme, images);
   }
 }

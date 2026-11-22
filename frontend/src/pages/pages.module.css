@@ -38,6 +38,43 @@
   box-shadow: var(--shadow);
 }
 
+/* Сообщение о загрузке файлов под панелью инструментов. */
+.notice {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100% - 32px));
+  margin: 0;
+  padding: 8px 8px 8px 14px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+
+.notice[role='alert'] {
+  color: var(--danger);
+}
+
+.noticeClose {
+  flex: none;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.noticeClose:hover {
+  background: var(--bg-hover);
+}
+
 .zoom {
   position: absolute;
   right: 16px;

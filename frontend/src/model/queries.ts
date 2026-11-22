@@ -1,5 +1,6 @@
 import type { ElementSource } from './document';
 import { hitTest } from './geometry';
+import { shapeSpec } from './shapes';
 import type { BoardElement, Point, ShapeElement } from './types';
 import { isArrow } from './types';
 
@@ -23,9 +24,13 @@ export function isConnectable(el: BoardElement): el is ShapeElement {
   return !isArrow(el) && el.kind !== 'path';
 }
 
-/** Элементы, у которых есть текст: все, кроме рукописных штрихов. У стрелки это подпись. */
+/**
+ * Элементы, у которых есть текст: все, кроме рукописных штрихов, картинок и вложений.
+ * У стрелки это подпись.
+ */
 export function hasText(el: BoardElement): boolean {
-  return el.kind !== 'path';
+  if (isArrow(el)) return true;
+  return el.kind !== 'path' && shapeSpec(el.kind).text !== 'none';
 }
 
 /** Верхняя фигура рядом с точкой, к которой можно привязать конец стрелки. */

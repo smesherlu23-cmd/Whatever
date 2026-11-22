@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BoardInfo } from './api';
 import { App } from './App';
 import { Editor } from './editor/Editor';
+import { BoardFiles } from './files/boardFiles';
 import { BoardView } from './pages/BoardView';
 import { MEMBER } from './testing/auth';
 import { stubServer } from './testing/server';
@@ -45,7 +46,7 @@ describe('App', () => {
   });
 
   it('switches the active tool on a board', () => {
-    render(<BoardView editor={new Editor()} header={null} />);
+    render(<BoardView editor={new Editor()} files={new BoardFiles('b1')} header={null} />);
     const rectangle = screen.getByRole('button', { name: 'Прямоугольник' });
     fireEvent.click(rectangle);
     expect(rectangle.getAttribute('aria-pressed')).toBe('true');
@@ -54,7 +55,7 @@ describe('App', () => {
 
   it('offers the arrow line kind while the arrow tool is active', () => {
     const editor = new Editor();
-    render(<BoardView editor={editor} header={null} />);
+    render(<BoardView editor={editor} files={new BoardFiles('b1')} header={null} />);
     expect(screen.queryByRole('group', { name: 'Линия стрелки' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Стрелка' }));

@@ -13,6 +13,7 @@ export type IconName =
   | 'sticky'
   | 'text'
   | 'shapes'
+  | 'image'
   | 'undo'
   | 'redo';
 
@@ -33,6 +34,13 @@ const ICONS: Record<IconName, ReactNode> = {
       <circle cx="6.5" cy="6.5" r="3.5" />
       <rect x="11" y="3" width="6" height="7" rx="1" />
       <path d="M10 11.5l4.5 6h-9z" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3" y="4" width="14" height="12" rx="1.5" />
+      <path d="M5.5 13.5l3.5-4 2.5 2.5 1.5-1.5 2 3" />
+      <circle cx="13" cy="7.5" r="1.2" />
     </>
   ),
   undo: <path d="M7.5 5L4 8.5 7.5 12M4 8.5h8a4 4 0 010 8H9" />,

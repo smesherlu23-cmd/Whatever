@@ -43,6 +43,9 @@ export const SHAPE_KINDS = [
   'frame',
   'group',
   'lane',
+  // Файлы с диска: картинка и карточка вложения
+  'image',
+  'file',
   'path',
 ] as const;
 
@@ -110,6 +113,17 @@ export interface Page {
   order: number;
 }
 
+/** Файл на сервере, который показывает картинка или карточка вложения. */
+export interface FileRef {
+  /** id файла на доске: адрес файла — /api/boards/<доска>/files/<id>. */
+  id: string;
+  name: string;
+  /** Размер в байтах. */
+  size: number;
+  /** Тип содержимого, который определил сервер. */
+  type: string;
+}
+
 export interface ShapeElement {
   id: string;
   kind: ShapeKind;
@@ -125,6 +139,8 @@ export interface ShapeElement {
   z: number;
   /** Только для path: точки x0, y0, x1, y1, … в долях рамки (0..1). */
   points?: number[];
+  /** Только для image и file: файл, который они показывают. */
+  file?: FileRef;
 }
 
 /** Конец стрелки: свободная точка или привязка к фигуре. */

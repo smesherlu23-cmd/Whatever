@@ -12,6 +12,12 @@ import { DEFAULT_FILL, DEFAULT_STICKY_FILL } from './types';
 /** Виды фигур из каталога: все, кроме рукописного штриха. */
 export type CatalogKind = Exclude<ShapeKind, 'path'>;
 
+/** Картинка и карточка вложения: их не рисуют инструментом, а вставляют с диска. */
+export type MediaKind = 'image' | 'file';
+
+/** Фигуры, которые рисуют инструментом с панели. */
+export type ToolKind = Exclude<CatalogKind, MediaKind>;
+
 /** Как стоит текст фигуры. */
 export type TextMode =
   /** Строки по центру области текста. */
@@ -21,7 +27,9 @@ export type TextMode =
   /** Одна строка в полосе заголовка контейнера, слева. */
   | 'title'
   /** Заголовок дорожки: снизу вверх в левой полосе. */
-  | 'vertical';
+  | 'vertical'
+  /** Текста нет: картинка и карточка вложения показывают файл. */
+  | 'none';
 
 /** Форма фигуры для попадания указателем и привязки стрелок. */
 export type Hull =
@@ -183,6 +191,12 @@ const personHead = (b: Bounds) => Math.min(b.w * 0.2, b.h * 0.2);
 /** Человечек актёра занимает верх рамки, имя пишется под ним. */
 const actorFigure = (b: Bounds) => b.h * 0.74;
 const packageTab = (b: Bounds) => ({ w: Math.min(b.w * 0.4, 90), h: Math.min(20, b.h * 0.2) });
+
+/** Значок листа с загнутым углом у карточки вложения: слева, по высоте карточки. */
+export function fileIconBox(b: Bounds): Bounds {
+  const h = Math.max(0, Math.min(44, b.h - 20));
+  return { x: b.x + 14, y: b.y + (b.h - h) / 2, w: h * 0.8, h };
+}
 
 export const SHAPES: Readonly<Record<CatalogKind, ShapeSpec>> = {
   rectangle: {
@@ -652,6 +666,41 @@ export const SHAPES: Readonly<Record<CatalogKind, ShapeSpec>> = {
     text: 'vertical',
     textBox: laneHeader,
     container: true,
+  },
+  image: {
+    label: 'Картинка',
+    size: { w: 240, h: 160 },
+    fill: DEFAULT_FILL,
+    // Контур — для заглушки, пока картинка загружается.
+    outline: (sink, b) => sink.rect(b.x, b.y, b.w, b.h),
+    stroke: 'none',
+    hull: RECT,
+    text: 'none',
+    textBox: whole,
+  },
+  file: {
+    label: 'Вложение',
+    size: { w: 260, h: 72 },
+    fill: DEFAULT_FILL,
+    outline: (sink, b) => sink.roundRect(b.x, b.y, b.w, b.h, Math.min(10, b.w / 4, b.h / 4)),
+    details: (sink, b) => {
+      const icon = fileIconBox(b);
+      const c = Math.min(12, icon.w * 0.4);
+      const right = icon.x + icon.w;
+      sink.moveTo(icon.x, icon.y);
+      sink.lineTo(right - c, icon.y);
+      sink.lineTo(right, icon.y + c);
+      sink.lineTo(right, icon.y + icon.h);
+      sink.lineTo(icon.x, icon.y + icon.h);
+      sink.closePath();
+      sink.moveTo(right - c, icon.y);
+      sink.lineTo(right - c, icon.y + c);
+      sink.lineTo(right, icon.y + c);
+    },
+    stroke: 'normal',
+    hull: RECT,
+    text: 'none',
+    textBox: whole,
   },
 };
 

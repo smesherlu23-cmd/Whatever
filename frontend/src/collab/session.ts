@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { reportSignedOut, syncUrl } from '../api';
 import { storageKeys } from '../config';
 import { Editor } from '../editor/Editor';
+import { BoardFiles } from '../files/boardFiles';
 import { BoardDocument } from '../model/document';
 import { Presence } from './presence';
 
@@ -31,6 +32,7 @@ export class BoardSession {
   readonly doc = new Y.Doc();
   readonly editor: Editor;
   readonly presence: Presence;
+  readonly files: BoardFiles;
   private currentStatus: ConnectionStatus = 'connecting';
   private readonly listeners = new Set<() => void>();
 
@@ -40,6 +42,7 @@ export class BoardSession {
   ) {
     this.editor = new Editor(new BoardDocument(this.doc));
     this.presence = new Presence(this.doc.clientID, userName);
+    this.files = new BoardFiles(boardId);
   }
 
   get status(): ConnectionStatus {

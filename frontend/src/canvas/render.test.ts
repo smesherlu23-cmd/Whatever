@@ -21,8 +21,12 @@ const theme: Theme = {
   shapeStroke: '#43434a',
   shapeFill: '#ffffff',
   stickyFill: '#5b5131',
+  muted: '#76767f',
+  placeholder: '#eeeef0',
   fontFamily: 'sans-serif',
 };
+
+const frame = { width: 800, height: 600, dpr: 1, theme };
 
 type Call = [method: string, ...args: unknown[]];
 
@@ -76,7 +80,7 @@ describe('renderBoard', () => {
     };
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, dark);
+    renderBoard(ctx, editor, { ...frame, theme: dark });
 
     const values = (prop: string) => named(calls, `set ${prop}`).map(([, value]) => value);
     expect(values('fillStyle')).toContain('#2c2c31');
@@ -90,7 +94,7 @@ describe('renderBoard', () => {
     editor.doc.add(shape('offscreen', 5000, 5000, { text: 'Не видно' }));
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual(['Видно']);
   });
@@ -116,7 +120,7 @@ describe('renderBoard', () => {
     editor.select(['a']);
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'roundRect').length).toBeGreaterThan(0);
     // Наконечник стрелки — закрашенный треугольник, ручки выделения — восемь квадратов.
@@ -131,7 +135,7 @@ describe('renderBoard', () => {
     editor.doc.add(shape('u', 400, 0, { kind: 'rounded' }));
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     const moves = named(calls, 'moveTo').map(([, x, y]) => [x, y]);
     expect(moves).toContainEqual([50, 0]);
@@ -168,7 +172,7 @@ describe('renderBoard', () => {
     });
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     const points = named(calls, 'lineTo').map(([, x, y]) => [x, y]);
     expect(points.slice(0, 3)).toEqual([
@@ -190,7 +194,11 @@ describe('renderBoard', () => {
     };
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 2, theme, [peer, { ...peer, name: 'Олег', page: 'p2' }]);
+    renderBoard(ctx, editor, {
+      ...frame,
+      dpr: 2,
+      peers: [peer, { ...peer, name: 'Олег', page: 'p2' }],
+    });
 
     // Олег смотрит другую страницу: его курсора здесь нет.
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual(['Анна']);
@@ -218,7 +226,7 @@ describe('renderBoard arrows', () => {
     editor.doc.add(arrow);
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'setLineDash').map(([, dash]) => dash)).toContainEqual([6, 5]);
     // Линия начинается за ромбом (18) и кончается у основания треугольника (200 − 14).
@@ -233,12 +241,12 @@ describe('renderBoard arrows', () => {
     const editor = new Editor();
     editor.doc.add(arrow);
     const first = recordingContext();
-    renderBoard(first.ctx, editor, 800, 600, 1, theme);
+    renderBoard(first.ctx, editor, frame);
     expect(named(first.calls, 'fillText')).toEqual([['fillText', 'Заказ', 100, 0]]);
 
     editor.startEditing('arrow');
     const second = recordingContext();
-    renderBoard(second.ctx, editor, 800, 600, 1, theme);
+    renderBoard(second.ctx, editor, frame);
     expect(named(second.calls, 'fillText')).toEqual([]);
   });
 
@@ -268,7 +276,7 @@ describe('renderBoard arrows', () => {
       });
     });
     const { ctx, calls } = recordingContext();
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
     expect(named(calls, 'arc').length).toBeGreaterThanOrEqual(3);
     // Каждый наконечник, кроме 'none', поворачивается вдоль линии.
     expect(named(calls, 'rotate').length).toBe(heads.length - 1);
@@ -287,7 +295,7 @@ describe('renderBoard catalog shapes', () => {
       }),
     );
     const { ctx, calls } = recordingContext();
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'fillText').map(([, text, x]) => [text, x])).toEqual([
       ['Заказ', 100],
@@ -307,7 +315,7 @@ describe('renderBoard catalog shapes', () => {
     );
     editor.doc.add(shape('l', 0, 300, { kind: 'lane', w: 500, h: 150, text: 'Бухгалтерия' }));
     const { ctx, calls } = recordingContext();
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual([
       'Платёжный контур',
@@ -325,10 +333,50 @@ describe('renderBoard catalog shapes', () => {
     );
     editor.doc.add(shape('e', 300, 0, { kind: 'endEvent', w: 44, h: 44, text: 'Готово', z: 2 }));
     const { ctx, calls } = recordingContext();
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     const [title] = named(calls, 'fillText');
     expect(String(title?.[1])).toMatch(/…$/);
     expect(named(calls, 'set lineWidth').map(([, width]) => width)).toContain(3.5);
+  });
+});
+
+describe('renderBoard files', () => {
+  const file = { id: 'f1', name: 'Схема сети.png', size: 3 * 1024 * 1024, type: 'image/png' };
+
+  it('draws a loaded picture and a placeholder while it loads', () => {
+    const editor = new Editor();
+    editor.doc.add(shape('p', 0, 0, { kind: 'image', w: 300, h: 200, file }));
+    const picture = { width: 300, height: 200 } as unknown as CanvasImageSource;
+
+    const waiting = recordingContext();
+    renderBoard(waiting.ctx, editor, { ...frame, images: () => null });
+    expect(named(waiting.calls, 'drawImage')).toEqual([]);
+    expect(named(waiting.calls, 'fillRect')).toContainEqual(['fillRect', 0, 0, 300, 200]);
+    expect(named(waiting.calls, 'set fillStyle').map(([, color]) => color)).toContain(
+      theme.placeholder,
+    );
+
+    const loaded = recordingContext();
+    renderBoard(loaded.ctx, editor, {
+      ...frame,
+      images: (id) => (id === 'f1' ? picture : null),
+    });
+    expect(named(loaded.calls, 'drawImage')).toEqual([['drawImage', picture, 0, 0, 300, 200]]);
+  });
+
+  it('writes the name and size on an attachment card, never its text', () => {
+    const editor = new Editor();
+    const pdf = { ...file, name: 'Регламент.pdf', type: 'application/octet-stream' };
+    editor.doc.add(
+      shape('c', 0, 0, { kind: 'file', w: 260, h: 72, text: 'чужой текст', file: pdf }),
+    );
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, frame);
+
+    expect(named(calls, 'fillText').map(([, text]) => text)).toEqual([
+      'Регламент.pdf',
+      'PDF · 3 МБ',
+    ]);
   });
 });

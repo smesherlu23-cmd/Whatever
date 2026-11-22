@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { arrowPath, bindEnd, boundaryPoint, hitTest } from './geometry';
 import { SvgPath } from './pathSink';
+import { hasText } from './queries';
 import { type CatalogKind, SHAPES, compartments, shapeSpec } from './shapes';
 import type { ArrowElement, ShapeElement } from './types';
 import { DEFAULT_ARROW_STYLE, SHAPE_KINDS } from './types';
@@ -34,6 +35,11 @@ describe('shape catalog', () => {
     const box = spec.textBox({ x: 0, y: 0, ...spec.size });
     expect(box.w).toBeGreaterThan(0);
     expect(box.h).toBeGreaterThan(0);
+  });
+
+  it('gives text to every shape but hand-drawn paths, pictures and attachments', () => {
+    const withoutText = SHAPE_KINDS.filter((kind) => !hasText(shape(kind)));
+    expect(withoutText).toEqual(['image', 'file', 'path']);
   });
 
   it('splits the text of a class into compartments', () => {

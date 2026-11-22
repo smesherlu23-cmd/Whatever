@@ -1,11 +1,11 @@
 import { SvgPath } from '../model/pathSink';
-import { type CatalogKind, shapeSpec } from '../model/shapes';
+import { type ToolKind, shapeSpec } from '../model/shapes';
 import type { Bounds } from '../model/types';
 
 const VIEW = 24;
 
 /** Рамка иконки по пропорциям фигуры: широкая, квадратная или высокая. */
-function iconBox(kind: CatalogKind): Bounds {
+function iconBox(kind: ToolKind): Bounds {
   const { w, h } = shapeSpec(kind).size;
   const aspect = w / h;
   const [bw, bh] = aspect > 1.3 ? [20, 13] : aspect < 0.77 ? [12, 20] : [17, 17];
@@ -13,7 +13,7 @@ function iconBox(kind: CatalogKind): Bounds {
 }
 
 /** Иконка фигуры для панели: тот же контур, что на холсте, только маленький. */
-export function ShapeIcon({ kind }: { kind: CatalogKind }) {
+export function ShapeIcon({ kind }: { kind: ToolKind }) {
   const spec = shapeSpec(kind);
   const box = iconBox(kind);
   const outline = new SvgPath();

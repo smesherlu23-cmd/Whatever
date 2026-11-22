@@ -31,6 +31,8 @@ x-backend: &backend
     POSTGRES_PORT: 5432
     # Бэкенд недоступен снаружи: к нему обращается только nginx.
     WHATEVER_FORWARDED_ALLOW_IPS: ${WHATEVER_FORWARDED_ALLOW_IPS:-*}
+    # Картинки и вложения досок лежат в томе files-data (см. сервис backend).
+    WHATEVER_FILES_DIR: /var/lib/whatever/files
   depends_on:
     postgres:
       condition: service_healthy
@@ -66,6 +68,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - files-data:/var/lib/whatever/files
     restart: unless-stopped
     # Время на штатную остановку: бэкенд дописывает в базу изменения открытых досок.
     stop_grace_period: 30s
@@ -86,3 +90,5 @@ services:
 
 volumes:
   postgres-data:
+  # Картинки и вложения досок. Копируется вместе с базой (см. docs/operations.md).
+  files-data:

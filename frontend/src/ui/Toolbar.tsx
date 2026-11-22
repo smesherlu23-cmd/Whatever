@@ -54,6 +54,7 @@ export function Toolbar({
   onArrowStyleChange,
   shapesOpen,
   onShapesToggle,
+  onInsertFile,
   onUndo,
   onRedo,
 }: {
@@ -69,6 +70,8 @@ export function Toolbar({
   /** Открыта ли панель «Фигуры». */
   shapesOpen: boolean;
   onShapesToggle: () => void;
+  /** Выбор картинки или файла с диска. */
+  onInsertFile: () => void;
   onUndo: () => void;
   onRedo: () => void;
 }) {
@@ -93,6 +96,15 @@ export function Toolbar({
         onClick={onShapesToggle}
       >
         <ToolIcon name="shapes" />
+      </button>
+      <button
+        type="button"
+        className={styles.button}
+        aria-label="Картинка или файл"
+        title="Картинка или файл с диска. Их можно и перетащить на доску или вставить: Ctrl+V"
+        onClick={onInsertFile}
+      >
+        <ToolIcon name="image" />
       </button>
       {tool === 'pen' && (
         <label

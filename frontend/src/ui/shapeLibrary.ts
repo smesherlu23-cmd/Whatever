@@ -1,10 +1,10 @@
 import type { ShapePreset } from '../editor/Editor';
-import type { CatalogKind } from '../model/shapes';
+import type { ToolKind } from '../model/shapes';
 
 export interface LibraryItem {
   /** Уникален в библиотеке: одна фигура бывает в нескольких наборах под разными именами. */
   id: string;
-  kind: CatalogKind;
+  kind: ToolKind;
   label: string;
   preset?: ShapePreset;
 }
@@ -14,7 +14,7 @@ export interface LibraryGroup {
   items: readonly LibraryItem[];
 }
 
-const item = (kind: CatalogKind, label: string, preset?: ShapePreset, id: string = kind) => ({
+const item = (kind: ToolKind, label: string, preset?: ShapePreset, id: string = kind) => ({
   id,
   kind,
   label,

@@ -72,6 +72,8 @@ function frameOf(element: BoardElement, editor: Editor, text: string): Frame {
       return { ...base, ...small, box, fontWeight: 600, align: 'left', singleLine: true };
     case 'vertical':
       return { ...base, ...small, box, fontWeight: 600, singleLine: true, vertical: true };
+    // У картинок и вложений текста нет, и поле для них не открывается (см. hasText).
+    case 'none':
     case 'center':
       return { ...base, box };
   }

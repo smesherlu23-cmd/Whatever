@@ -64,6 +64,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
       <BoardView
         editor={session.editor}
         presence={session.presence}
+        files={session.files}
         header={
           <AppHeader
             actions={

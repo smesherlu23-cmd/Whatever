@@ -43,6 +43,19 @@ describe('parseElement', () => {
     }
   });
 
+  it('accepts pictures and attachments only with a valid file', () => {
+    const file = { id: 'f1', name: 'схема.png', size: 2048, type: 'image/png' };
+    const picture = { ...rectangle, kind: 'image', file: { ...file, extra: 'отброшено' } };
+    expect(parseElement(picture)).toEqual({ ...rectangle, kind: 'image', file });
+    expect(parseElement({ ...rectangle, kind: 'file', file })).toMatchObject({ file });
+    expect(parseElement({ ...rectangle, kind: 'image' })).toBeNull();
+    for (const broken of [null, 'f1', { ...file, size: -1 }, { ...file, id: 7 }]) {
+      expect(parseElement({ ...rectangle, kind: 'file', file: broken })).toBeNull();
+    }
+    // Другим фигурам файл ни к чему: поле не попадает дальше.
+    expect(parseElement({ ...rectangle, file })).toEqual(rectangle);
+  });
+
   it('puts elements drawn before pages existed on the first page', () => {
     expect(parseElement({ ...rectangle, page: undefined })).toMatchObject({ page: 'main' });
   });

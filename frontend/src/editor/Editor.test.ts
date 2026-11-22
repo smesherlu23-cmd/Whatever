@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
-import { DEFAULT_STICKY_FILL } from '../model/types';
+import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE } from '../model/types';
 import { Editor } from './Editor';
 
 function drag(editor: Editor, from: [number, number], to: [number, number], shift = false) {
@@ -128,6 +128,65 @@ describe('Editor', () => {
     drag(editor, [0, 0], [100, 100]);
     drag(editor, [100, 100], [150, 120]);
     expect(shapes(editor.doc)[0]).toMatchObject({ x: 0, y: 0, w: 150, h: 120 });
+  });
+
+  it('keeps the proportions of a picture unless Shift is held', () => {
+    const editor = new Editor();
+    const file = { id: 'f1', name: 'схема.png', size: 10, type: 'image/png' };
+    editor.insert([
+      {
+        id: 'p',
+        kind: 'image',
+        page: editor.pageId,
+        x: 0,
+        y: 0,
+        w: 200,
+        h: 100,
+        text: '',
+        stroke: DEFAULT_STROKE,
+        fill: DEFAULT_FILL,
+        z: 1,
+        file,
+      },
+    ]);
+    drag(editor, [200, 100], [300, 110]);
+    expect(shapes(editor.doc)[0]).toMatchObject({ w: 300, h: 150 });
+    drag(editor, [300, 150], [320, 300], true);
+    expect(shapes(editor.doc)[0]).toMatchObject({ w: 320, h: 300 });
+  });
+
+  it('finds the file under the pointer and inserts elements as one undo step', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    expect(editor.viewportCenter()).toEqual({ x: 400, y: 300 });
+    const file = { id: 'f1', name: 'план.pdf', size: 10, type: 'application/octet-stream' };
+    const card = {
+      id: 'c',
+      kind: 'file' as const,
+      page: editor.pageId,
+      x: 0,
+      y: 0,
+      w: 260,
+      h: 72,
+      text: '',
+      stroke: DEFAULT_STROKE,
+      fill: DEFAULT_FILL,
+      z: 1,
+      file,
+    };
+    editor.insert([card, { ...card, id: 'elsewhere', page: 'other', x: 400 }]);
+    expect([...editor.selection]).toEqual(['c']);
+    expect(editor.attachmentAt({ x: 100, y: 30 })).toEqual(file);
+    expect(editor.attachmentAt({ x: 600, y: 400 })).toBeUndefined();
+    // Двойной щелчок по вложению не открывает ввод текста: у карточки его нет.
+    editor.doubleClick({ x: 100, y: 30 });
+    expect(editor.editingId).toBeNull();
+
+    editor.undo();
+    expect(editor.doc.size).toBe(0);
+    editor.setReadOnly(true);
+    editor.insert([card]);
+    expect(editor.doc.size).toBe(0);
   });
 
   it('selects shapes fully inside the marquee', () => {

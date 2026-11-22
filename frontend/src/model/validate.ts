@@ -5,6 +5,7 @@ import {
   type BoardElement,
   DEFAULT_ARROW_STYLE,
   DEFAULT_PAGE,
+  type FileRef,
   type Page,
   type Point,
   SHAPE_KINDS,
@@ -56,6 +57,16 @@ function parseArrowEnd(value: unknown): ArrowEnd | null {
     : { x, y, shapeId };
 }
 
+/** Файл картинки или вложения только с известными полями. */
+function parseFileRef(value: unknown): FileRef | null {
+  if (!isRecord(value)) return null;
+  const { id, name, size, type } = value;
+  if (!isString(id) || !isString(name) || !isString(type) || !isNumber(size) || size < 0) {
+    return null;
+  }
+  return { id, name, size, type };
+}
+
 /** Элемент доски из данных Yjs или null, если данные не похожи на элемент. */
 export function parseElement(value: unknown): BoardElement | null {
   if (!isRecord(value) || !isString(value.id) || !isNumber(value.z) || !isString(value.stroke)) {
@@ -92,6 +103,11 @@ export function parseElement(value: unknown): BoardElement | null {
   }
   if (!isString(text) || !isString(fill)) return null;
   const shape = { id, kind, page, x, y, w, h, text, fill, stroke, z };
+  if (kind === 'image' || kind === 'file') {
+    // Картинка и вложение без файла ничего не показывают.
+    const file = parseFileRef(value.file);
+    return file ? { ...shape, file } : null;
+  }
   if (points === undefined) return shape;
   return isNumberArray(points) ? { ...shape, points } : null;
 }

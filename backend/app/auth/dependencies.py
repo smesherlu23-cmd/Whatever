@@ -15,6 +15,7 @@ from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.auth.throttle import LoginThrottle
 from app.core.config import Settings
 from app.core.db import DbSession
+from app.files import FileStore
 from app.models import Board, Role, User
 from app.sync.room import RoomManager
 from app.sync.sockets import BoardSockets
@@ -127,3 +128,11 @@ def open_rooms(request: Request) -> RoomManager:
 
 
 OpenRooms = Annotated[RoomManager, Depends(open_rooms)]
+
+
+def file_store(request: Request) -> FileStore:
+    store: FileStore = request.app.state.files
+    return store
+
+
+FileStorage = Annotated[FileStore, Depends(file_store)]

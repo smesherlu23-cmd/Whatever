@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-from app.api import admin, auth, boards, folders, health, sharing, sync, users
+from app.api import admin, auth, boards, files, folders, health, sharing, sync, users
 from app.auth.dependencies import same_origin
 from app.auth.throttle import LoginThrottle
 from app.core.config import Settings, get_settings
 from app.core.db import Database
+from app.files import FileStore
 from app.sync.room import RoomManager, SavePolicy
 from app.sync.sockets import BoardSockets
 
@@ -34,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.database = database
         app.state.rooms = rooms
         app.state.sockets = BoardSockets()
+        app.state.files = FileStore(config.files_dir, config.max_upload_bytes)
         app.state.login_throttle = LoginThrottle(
             max_failures=config.login_max_failures, window=config.login_window
         )
@@ -51,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     for router in (
         auth.router,
         boards.router,
+        files.router,
         folders.router,
         sharing.router,
         users.router,
