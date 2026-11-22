@@ -1,0 +1,9 @@
+# Переводы строк в репозитории всегда LF, в том числе у тех, кто работает в Windows.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+
+# Файлы блокировки зависимостей генерируются инструментами: в diff и статистике языков они не нужны.
+backend/uv.lock linguist-generated=true -diff
+frontend/package-lock.json linguist-generated=true -diff

@@ -1,11 +1,28 @@
+# Настройки с паролями. Пример без секретов — .env.example.
+.env
+.env.*
+!.env.example
+
+# Зависимости и сборка
 node_modules/
 .venv/
-__pycache__/
-*.pyc
 dist/
-.env
+*.tsbuildinfo
+
+# Кэши инструментов
+__pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
-*.tsbuildinfo
+.mypy_cache/
+
+# Отчёты о покрытии
 .coverage
+.coverage.*
+htmlcov/
 coverage/
+
+# Системные файлы и редакторы
+.DS_Store
+.idea/
+*.swp

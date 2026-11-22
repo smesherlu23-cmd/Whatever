@@ -1,0 +1,36 @@
+# Еженедельные обновления зависимостей. Мелкие обновления приходят одним pull request
+# на каждую экосистему, крупные (major) — по одному, чтобы их можно было проверить отдельно.
+version: 2
+
+updates:
+  - package-ecosystem: uv
+    directory: /backend
+    schedule: { interval: weekly }
+    groups:
+      backend:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    groups:
+      frontend:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend]
+    schedule: { interval: weekly }
+    groups:
+      docker:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: { interval: weekly }
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions:
+        update-types: [minor, patch]
