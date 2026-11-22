@@ -7,18 +7,11 @@ import { subscribeTheme } from '../ui/theme';
 import { renderBoard } from './render';
 import { readTheme } from './scene';
 
-const CURSORS: Record<Tool, string> = {
-  select: 'default',
-  pen: 'crosshair',
-  rectangle: 'crosshair',
-  rounded: 'crosshair',
-  ellipse: 'crosshair',
-  diamond: 'crosshair',
-  triangle: 'crosshair',
-  sticky: 'crosshair',
-  arrow: 'crosshair',
-  text: 'text',
-};
+/** Курсор над холстом: стрелка для выделения, I-образный для текста, перекрестие для рисования. */
+function cursorFor(tool: Tool): string {
+  if (tool === 'select') return 'default';
+  return tool === 'text' ? 'text' : 'crosshair';
+}
 
 const TYPING_TARGETS = 'input, textarea, select, [contenteditable="true"]';
 
@@ -48,7 +41,7 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
       frame = requestAnimationFrame(render);
       if (!dirty) return;
       dirty = false;
-      canvas.style.cursor = editor.spaceHeld ? 'grab' : CURSORS[editor.tool];
+      canvas.style.cursor = editor.spaceHeld ? 'grab' : cursorFor(editor.tool);
       renderBoard(
         ctx,
         editor,

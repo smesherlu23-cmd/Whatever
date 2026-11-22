@@ -2,11 +2,17 @@
  * Размеры текста в фигурах (в мировых единицах). Общие для холста и поля редактирования,
  * чтобы текст при вводе стоял ровно там же, где потом нарисуется.
  */
-import type { Bounds, Point, ShapeElement } from './types';
+import type { Bounds, Point } from './types';
 
 export const FONT_SIZE = 16;
 export const LINE_HEIGHT = 20;
 export const TEXT_PADDING = 8;
+
+/** Мелкий текст: секции класса и заголовки контейнеров. */
+export const SMALL_FONT_SIZE = 14;
+export const SMALL_LINE_HEIGHT = 18;
+/** Поля секции класса сверху и снизу. */
+export const SECTION_PADDING = 6;
 
 /** Подпись стрелки мельче текста фигур и не шире LABEL_MAX_WIDTH. */
 export const LABEL_FONT_SIZE = 14;
@@ -60,14 +66,4 @@ export function wrapText(
     lines.push(line);
   }
   return lines;
-}
-
-/**
- * Область фигуры, по центру которой стоит текст. У треугольника это нижняя половина:
- * у вершины для текста нет места.
- */
-export function textBox(el: ShapeElement): Bounds {
-  if (el.kind === 'triangle')
-    return { x: el.x + el.w / 4, y: el.y + el.h / 2, w: el.w / 2, h: el.h / 2 };
-  return { x: el.x, y: el.y, w: el.w, h: el.h };
 }

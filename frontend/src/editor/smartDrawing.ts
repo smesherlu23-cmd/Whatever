@@ -1,6 +1,6 @@
 import type { BoardDocument } from '../model/document';
 import { newId } from '../model/ids';
-import { normalizePath } from '../model/geometry';
+import { bindEnd, normalizePath } from '../model/geometry';
 import { bindTargetAt, isConnectable } from '../model/queries';
 import {
   type ArrowEnd,
@@ -75,8 +75,8 @@ function toElement(
     // Петля на одной фигуре — скорее каракуля, чем связь: оставляем набросок.
     if (from !== undefined && from.id === to?.id) return null;
     const straight = straightenLine(result.start, result.end);
-    const start: ArrowEnd = from ? { ...result.start, shapeId: from.id } : straight.start;
-    const end: ArrowEnd = to ? { ...result.end, shapeId: to.id } : straight.end;
+    const start: ArrowEnd = from ? bindEnd(from, result.start) : straight.start;
+    const end: ArrowEnd = to ? bindEnd(to, result.end) : straight.end;
     return {
       id,
       kind: 'arrow',

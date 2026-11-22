@@ -2,6 +2,7 @@ import { type Camera, initialCamera, panBy, screenToWorld, zoomAt } from '../can
 import { cloneElements } from '../model/clone';
 import { BoardDocument, type ElementSource } from '../model/document';
 import {
+  bindEnd,
   contains,
   distance,
   elementBounds,
@@ -10,6 +11,7 @@ import {
 } from '../model/geometry';
 import { newId } from '../model/ids';
 import { bindTargetAt, elementAt, hasText } from '../model/queries';
+import { type CatalogKind, SHAPES, shapeSpec } from '../model/shapes';
 import {
   type ArrowElement,
   type ArrowEnd,
@@ -17,35 +19,31 @@ import {
   type BoardElement,
   type Bounds,
   DEFAULT_ARROW_STYLE,
-  DEFAULT_FILL,
   DEFAULT_PAGE,
-  DEFAULT_STICKY_FILL,
   DEFAULT_STROKE,
   type Point,
   type ShapeElement,
-  type ShapeKind,
   isArrow,
 } from '../model/types';
 import { recognize } from '../recognition/recognize';
 import { type KeyInput, handleShortcut } from './shortcuts';
 import { commitStroke } from './smartDrawing';
 
-/** Фигуры, которые рисуются протягиванием рамки. */
-export type ShapeTool = Exclude<ShapeKind, 'path'>;
+/** Фигуры, которые рисуются протягиванием рамки: все из каталога. */
+export type ShapeTool = CatalogKind;
 export type Tool = 'select' | 'pen' | 'arrow' | ShapeTool;
 
-const SHAPE_TOOLS: ReadonlySet<Tool> = new Set<ShapeTool>([
-  'rectangle',
-  'rounded',
-  'ellipse',
-  'diamond',
-  'triangle',
-  'sticky',
-  'text',
-]);
-
 function isShapeTool(tool: Tool): tool is ShapeTool {
-  return SHAPE_TOOLS.has(tool);
+  return tool in SHAPES;
+}
+
+/**
+ * Заготовка для инструмента фигуры: например, интерфейс — это класс с заранее
+ * написанным стереотипом. Размер заготовки заменяет размер из каталога.
+ */
+export interface ShapePreset {
+  text?: string;
+  size?: { w: number; h: number };
 }
 
 /** Вид выделенных стрелок. Поле равно null, если у выделенных стрелок оно разное. */
@@ -61,20 +59,6 @@ const HIT_TOLERANCE_PX = 6;
 const HANDLE_SIZE_PX = 10;
 const BIND_DISTANCE_PX = 12;
 const MIN_SIZE = 8;
-const DEFAULT_SIZE: Record<ShapeKind, { w: number; h: number }> = {
-  rectangle: { w: 160, h: 80 },
-  rounded: { w: 160, h: 80 },
-  ellipse: { w: 120, h: 120 },
-  diamond: { w: 140, h: 100 },
-  triangle: { w: 140, h: 120 },
-  sticky: { w: 160, h: 160 },
-  text: { w: 160, h: 40 },
-  path: { w: 0, h: 0 },
-};
-const DEFAULT_FILLS: Partial<Record<ShapeKind, string>> = {
-  text: 'transparent',
-  sticky: DEFAULT_STICKY_FILL,
-};
 const DUPLICATE_OFFSET = 24;
 
 export interface PointerInput {
@@ -85,7 +69,8 @@ export interface PointerInput {
 type Interaction =
   | { type: 'none' }
   | { type: 'pan'; last: Point }
-  | { type: 'move'; last: Point }
+  /** carried — то, что лежит в перетаскиваемых контейнерах и едет вместе с ними. */
+  | { type: 'move'; last: Point; carried: ReadonlySet<string> }
   | { type: 'resize'; id: string; handle: Handle; start: Bounds; origin: Point }
   | { type: 'create'; id: string; origin: Point }
   | { type: 'arrowEnd'; id: string; which: 'start' | 'end'; created: boolean }
@@ -135,6 +120,8 @@ export class Editor {
   stroke: Point[] | null = null;
 
   private interaction: Interaction = { type: 'none' };
+  /** Заготовка для следующей фигуры. Сбрасывается, когда фигура поставлена. */
+  private preset: ShapePreset | null = null;
   private readonly listeners = new Set<() => void>();
   /** Камеры страниц, на которых уже побывали: при возврате страница видна как прежде. */
   private readonly cameras = new Map<string, Camera>();
@@ -281,9 +268,11 @@ export class Editor {
     this.emit();
   }
 
-  setTool(tool: Tool): void {
+  /** Выбирает инструмент. preset задаёт текст и размер новой фигуры, например для интерфейса. */
+  setTool(tool: Tool, preset: ShapePreset | null = null): void {
     if (this.readOnly && tool !== 'select') return;
     this.tool = tool;
+    this.preset = isShapeTool(tool) ? preset : null;
     if (tool !== 'select') this.selection = new Set();
     this.emit();
   }
@@ -394,8 +383,9 @@ export class Editor {
     else if (isShapeTool(tool)) this.beginCreate(tool, world);
   }
 
-  private beginCreate(kind: ShapeKind, world: Point): void {
+  private beginCreate(kind: ShapeTool, world: Point): void {
     const id = newId();
+    const spec = shapeSpec(kind);
     this.doc.add({
       id,
       kind,
@@ -404,10 +394,11 @@ export class Editor {
       y: world.y,
       w: 0,
       h: 0,
-      text: '',
+      text: this.preset?.text ?? '',
       stroke: DEFAULT_STROKE,
-      fill: DEFAULT_FILLS[kind] ?? DEFAULT_FILL,
-      z: this.doc.nextZ(),
+      fill: spec.fill,
+      // Контейнер встаёт под всё, что уже нарисовано: фигуры остаются на виду и в нём.
+      z: spec.container ? this.doc.bottomZ() : this.doc.nextZ(),
     });
     this.selection = new Set([id]);
     this.interaction = { type: 'create', id, origin: world };
@@ -417,7 +408,7 @@ export class Editor {
   private beginArrow(world: Point): void {
     const id = newId();
     const target = this.bindTargetAt(world);
-    const start: ArrowEnd = target ? { x: world.x, y: world.y, shapeId: target.id } : world;
+    const start: ArrowEnd = target ? bindEnd(target, world) : world;
     this.doc.add({
       id,
       kind: 'arrow',
@@ -462,7 +453,9 @@ export class Editor {
       } else if (!this.selection.has(hit.id)) {
         this.selection = new Set([hit.id]);
       }
-      this.interaction = this.readOnly ? { type: 'none' } : { type: 'move', last: world };
+      this.interaction = this.readOnly
+        ? { type: 'none' }
+        : { type: 'move', last: world, carried: this.carriedBySelection() };
       this.emit();
       return;
     }
@@ -483,7 +476,7 @@ export class Editor {
         this.emit();
         return;
       case 'move':
-        this.moveSelection(world.x - it.last.x, world.y - it.last.y);
+        this.moveSelection(world.x - it.last.x, world.y - it.last.y, it.carried);
         it.last = world;
         return;
       case 'resize':
@@ -500,9 +493,7 @@ export class Editor {
         const other = arrow[it.which === 'start' ? 'end' : 'start'];
         const target = this.bindTargetAt(world, other.shapeId);
         this.doc.update(it.id, {
-          [it.which]: target
-            ? { x: world.x, y: world.y, shapeId: target.id }
-            : { x: world.x, y: world.y },
+          [it.which]: target ? bindEnd(target, world) : { x: world.x, y: world.y },
         });
         return;
       }
@@ -555,15 +546,16 @@ export class Editor {
 
   private finishCreate(id: string, origin: Point): void {
     const el = this.shape(id);
-    if (!el) return;
+    if (!el || el.kind === 'path') return;
     if (el.w < MIN_SIZE && el.h < MIN_SIZE) {
       // Щелчок без перетаскивания: фигура стандартного размера с центром в точке щелчка.
-      const size = DEFAULT_SIZE[el.kind];
+      const size = this.preset?.size ?? shapeSpec(el.kind).size;
       this.doc.update(id, { x: origin.x - size.w / 2, y: origin.y - size.h / 2, ...size });
     } else {
       this.doc.update(id, { w: Math.max(el.w, MIN_SIZE), h: Math.max(el.h, MIN_SIZE) });
     }
     this.tool = 'select';
+    this.preset = null;
     if (el.kind === 'text') this.startEditing(id);
   }
 
@@ -580,10 +572,28 @@ export class Editor {
     this.tool = 'select';
   }
 
-  private moveSelection(dx: number, dy: number): void {
+  /**
+   * Элементы, которые целиком лежат в выделенных контейнерах, но сами не выделены.
+   * Считаются в начале перетаскивания: то, что окажется в рамке по пути, не подхватывается.
+   */
+  private carriedBySelection(): Set<string> {
+    const containers = [...this.selection]
+      .map((id) => this.shape(id))
+      .filter((el) => el !== undefined && el.kind !== 'path' && shapeSpec(el.kind).container);
+    const carried = new Set<string>();
+    if (containers.length === 0) return carried;
+    for (const el of this.page.list()) {
+      if (this.selection.has(el.id)) continue;
+      const bounds = elementBounds(el, this.lookup);
+      if (containers.some((c) => c !== undefined && contains(c, bounds))) carried.add(el.id);
+    }
+    return carried;
+  }
+
+  private moveSelection(dx: number, dy: number, carried: ReadonlySet<string>): void {
     if (dx === 0 && dy === 0) return;
     this.doc.transact(() => {
-      for (const id of this.selection) {
+      for (const id of [...this.selection, ...carried]) {
         const el = this.lookup(id);
         if (!el) continue;
         if (isArrow(el)) {

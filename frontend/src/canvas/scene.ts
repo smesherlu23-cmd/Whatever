@@ -8,26 +8,21 @@ import {
   labelAnchor,
   pathPoints,
   pathVertices,
-  trianglePoints,
 } from '../model/geometry';
+import { type ShapeSpec, compartments, shapeSpec } from '../model/shapes';
 import {
   FONT_SIZE,
   LABEL_FONT_SIZE,
   LABEL_LINE_HEIGHT,
   LINE_HEIGHT,
+  SECTION_PADDING,
+  SMALL_FONT_SIZE,
+  SMALL_LINE_HEIGHT,
   TEXT_PADDING,
   labelLayout,
-  textBox,
   wrapText,
 } from '../model/textLayout';
-import type {
-  ArrowElement,
-  ArrowHead,
-  Bounds,
-  Point,
-  ShapeElement,
-  ShapeKind,
-} from '../model/types';
+import type { ArrowElement, ArrowHead, Bounds, Point, ShapeElement } from '../model/types';
 import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE, isArrow } from '../model/types';
 import { HEAD_SHAPES, drawHead } from './arrowHeads';
 
@@ -64,8 +59,6 @@ export function readTheme(el: Element): Theme {
   };
 }
 
-type OutlineKind = Exclude<ShapeKind, 'path'>;
-
 /**
  * Цвет на экране. Цвета по умолчанию хранятся в документе одним значением,
  * а рисуются цветами текущей темы, чтобы фигуры читались и на тёмном фоне.
@@ -78,10 +71,8 @@ export function paint(color: string, theme: Theme): string {
 }
 
 const LINE_WIDTH = 1.5;
+const BOLD_LINE_WIDTH = 3.5;
 const DASH = [6, 5];
-const CORNER_RADIUS = 3;
-const ROUNDED_RADIUS = 20;
-const STICKY_RADIUS = 2;
 const LABEL_RADIUS = 4;
 
 export function polyline(ctx: CanvasRenderingContext2D, points: readonly Point[]): void {
@@ -91,43 +82,12 @@ export function polyline(ctx: CanvasRenderingContext2D, points: readonly Point[]
   for (const p of rest) ctx.lineTo(p.x, p.y);
 }
 
-/** Контур замкнутой фигуры в рамке bounds. Добавляется к текущему пути холста. */
-function outline(ctx: CanvasRenderingContext2D, kind: OutlineKind, bounds: Bounds): void {
-  const { x, y, w, h } = bounds;
-  switch (kind) {
-    case 'ellipse':
-      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-      break;
-    case 'diamond':
-      ctx.moveTo(x + w / 2, y);
-      ctx.lineTo(x + w, y + h / 2);
-      ctx.lineTo(x + w / 2, y + h);
-      ctx.lineTo(x, y + h / 2);
-      ctx.closePath();
-      break;
-    case 'triangle':
-      polyline(ctx, trianglePoints(bounds));
-      ctx.closePath();
-      break;
-    case 'rectangle':
-      ctx.roundRect(x, y, w, h, Math.min(CORNER_RADIUS, w / 4, h / 4));
-      break;
-    case 'rounded':
-      ctx.roundRect(x, y, w, h, Math.min(ROUNDED_RADIUS, w / 3, h / 3));
-      break;
-    case 'sticky':
-      ctx.roundRect(x, y, w, h, STICKY_RADIUS);
-      break;
-    case 'text':
-      ctx.rect(x, y, w, h);
-      break;
-  }
-}
-
-function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
+function drawPath(ctx: CanvasRenderingContext2D, el: ShapeElement, theme: Theme): void {
   ctx.beginPath();
-  if (el.kind === 'path') polyline(ctx, pathPoints(el));
-  else outline(ctx, el.kind, el);
+  polyline(ctx, pathPoints(el));
+  ctx.strokeStyle = paint(el.stroke, theme);
+  ctx.lineWidth = 2;
+  ctx.stroke();
 }
 
 function drawShape(
@@ -136,42 +96,126 @@ function drawShape(
   editing: boolean,
   theme: Theme,
 ): void {
-  const stroke = paint(el.stroke, theme);
-  shapePath(ctx, el);
   if (el.kind === 'path') {
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    drawPath(ctx, el, theme);
     return;
   }
-  if (el.kind === 'sticky') {
-    // Стикер без рамки: от фона его отделяет тень, как у листка бумаги.
+  const spec = shapeSpec(el.kind);
+  const stroke = paint(el.stroke, theme);
+  ctx.beginPath();
+  spec.outline(ctx, el);
+  if (el.fill !== 'transparent') {
     ctx.save();
-    ctx.shadowColor = 'rgb(0 0 0 / 0.18)';
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetY = 2;
+    if (spec.shadow) {
+      // Стикер без рамки: от фона его отделяет тень, как у листка бумаги.
+      ctx.shadowColor = 'rgb(0 0 0 / 0.18)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+    }
     ctx.fillStyle = paint(el.fill, theme);
     ctx.fill();
     ctx.restore();
-  } else if (el.kind !== 'text') {
-    if (el.fill !== 'transparent') {
-      ctx.fillStyle = paint(el.fill, theme);
-      ctx.fill();
-    }
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = LINE_WIDTH;
-    ctx.stroke();
   }
-  if (editing || !el.text) return;
-  ctx.fillStyle = stroke;
+  if (spec.stroke !== 'none') {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = spec.stroke === 'bold' ? BOLD_LINE_WIDTH : LINE_WIDTH;
+    ctx.setLineDash(spec.dashed ? DASH : []);
+    ctx.stroke();
+    if (spec.details) {
+      ctx.lineWidth = LINE_WIDTH;
+      ctx.setLineDash(spec.dashedDetails ? DASH : []);
+      ctx.beginPath();
+      spec.details(ctx, el);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+  if (spec.text === 'compartments') drawCompartments(ctx, el, editing, stroke, theme);
+  else if (!editing && el.text) drawText(ctx, el, spec, stroke, theme);
+}
+
+function drawText(
+  ctx: CanvasRenderingContext2D,
+  el: ShapeElement,
+  spec: ShapeSpec,
+  color: string,
+  theme: Theme,
+): void {
+  const box = spec.textBox(el);
+  ctx.fillStyle = color;
+  if (spec.text === 'title' || spec.text === 'vertical') {
+    // Заголовок контейнера — одна строка; не влезает — обрезается многоточием.
+    ctx.font = `600 ${SMALL_FONT_SIZE}px ${theme.fontFamily}`;
+    ctx.textBaseline = 'middle';
+    const vertical = spec.text === 'vertical';
+    const room = (vertical ? box.h : box.w) - TEXT_PADDING * 2;
+    const title = fit((t) => ctx.measureText(t).width, el.text.split('\n')[0] ?? '', room);
+    ctx.save();
+    if (vertical) {
+      ctx.translate(box.x + box.w / 2, box.y + box.h / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'center';
+      ctx.fillText(title, 0, 0);
+    } else {
+      ctx.textAlign = 'left';
+      ctx.fillText(title, box.x + TEXT_PADDING + 4, box.y + box.h / 2);
+    }
+    ctx.restore();
+    return;
+  }
   ctx.font = `${FONT_SIZE}px ${theme.fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const box = textBox(el);
   const lines = wrapText((t) => ctx.measureText(t).width, el.text, box.w - TEXT_PADDING * 2);
   const top = box.y + box.h / 2 - ((lines.length - 1) * LINE_HEIGHT) / 2;
   lines.forEach((line, i) => {
     ctx.fillText(line, box.x + box.w / 2, top + i * LINE_HEIGHT);
+  });
+}
+
+/** Обрезает строку многоточием, чтобы она влезла в width. */
+function fit(measure: (text: string) => number, text: string, width: number): string {
+  if (measure(text) <= width) return text;
+  let cut = text;
+  while (cut.length > 0 && measure(`${cut}…`) > width) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * Класс и сущность: секции текста одна под другой с линией между ними. Первая секция —
+ * имя по центру, остальные — строки слева. Последняя секция тянется до низа фигуры.
+ */
+function drawCompartments(
+  ctx: CanvasRenderingContext2D,
+  el: ShapeElement,
+  editing: boolean,
+  color: string,
+  theme: Theme,
+): void {
+  const measure = (t: string) => ctx.measureText(t).width;
+  const room = el.w - TEXT_PADDING * 2;
+  let y = el.y;
+  compartments(el.text).forEach((rows, index) => {
+    if (index > 0 && y < el.y + el.h) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = LINE_WIDTH;
+      ctx.beginPath();
+      ctx.moveTo(el.x, y);
+      ctx.lineTo(el.x + el.w, y);
+      ctx.stroke();
+    }
+    const top = y + SECTION_PADDING;
+    y = top + Math.max(rows.length, 1) * SMALL_LINE_HEIGHT + SECTION_PADDING;
+    if (editing) return;
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'middle';
+    ctx.font = `${index === 0 ? '600 ' : ''}${SMALL_FONT_SIZE}px ${theme.fontFamily}`;
+    ctx.textAlign = index === 0 ? 'center' : 'left';
+    const x = index === 0 ? el.x + el.w / 2 : el.x + TEXT_PADDING;
+    rows.forEach((row, i) => {
+      const rowY = top + (i + 0.5) * SMALL_LINE_HEIGHT;
+      if (rowY < el.y + el.h) ctx.fillText(fit(measure, row, room), x, rowY);
+    });
   });
 }
 

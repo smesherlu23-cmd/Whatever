@@ -45,13 +45,15 @@ function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every(isNumber);
 }
 
-function isArrowEnd(value: unknown): value is ArrowEnd {
-  return (
-    isRecord(value) &&
-    isNumber(value.x) &&
-    isNumber(value.y) &&
-    (value.shapeId === undefined || isString(value.shapeId))
-  );
+/** Конец стрелки только с известными полями: чужие лишние поля дальше не идут. */
+function parseArrowEnd(value: unknown): ArrowEnd | null {
+  if (!isRecord(value) || !isNumber(value.x) || !isNumber(value.y)) return null;
+  const { x, y, shapeId, anchor } = value;
+  if (shapeId === undefined) return { x, y };
+  if (!isString(shapeId)) return null;
+  return isPoint(anchor)
+    ? { x, y, shapeId, anchor: { x: anchor.x, y: anchor.y } }
+    : { x, y, shapeId };
 }
 
 /** Элемент доски из данных Yjs или null, если данные не похожи на элемент. */
@@ -63,8 +65,9 @@ export function parseElement(value: unknown): BoardElement | null {
   // Элементы, нарисованные до появления страниц, лежат на первой странице.
   const page = isString(value.page) ? value.page : DEFAULT_PAGE;
   if (value.kind === 'arrow') {
-    const { start, end } = value;
-    if (!isArrowEnd(start) || !isArrowEnd(end)) return null;
+    const start = parseArrowEnd(value.start);
+    const end = parseArrowEnd(value.end);
+    if (!start || !end) return null;
     // У стрелок, нарисованных раньше, части полей нет: они выглядят как раньше —
     // прямая сплошная линия с наконечником на конце и без подписи.
     const defaults = DEFAULT_ARROW_STYLE;

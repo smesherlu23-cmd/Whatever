@@ -58,3 +58,39 @@ describe('TextEditor for an arrow label', () => {
     expect(editor.editingId).toBeNull();
   });
 });
+
+describe('TextEditor for shapes from the catalog', () => {
+  function editing(kind: 'class' | 'lane' | 'frame') {
+    const editor = new Editor();
+    editor.setTool(kind);
+    editor.pointerDown({ x: 400, y: 400 });
+    editor.pointerUp();
+    const id = defined(shapes(editor.doc)[0]).id;
+    editor.startEditing(id);
+    render(<TextEditor editor={editor} id={id} />);
+    return { editor, id, field: screen.getByRole('textbox', { name: 'Текст фигуры' }) };
+  }
+
+  it('edits the compartments of a class from the top left', () => {
+    const { field } = editing('class');
+    expect(field.style.textAlign).toBe('left');
+    expect(field.style.paddingTop).toBe('6px');
+    // В классе Enter переносит строку: секций обычно несколько.
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(screen.queryByRole('textbox')).not.toBeNull();
+  });
+
+  it('edits a container title on one line', () => {
+    const { editor, id, field } = editing('frame');
+    fireEvent.change(field, { target: { value: 'Контур оплаты' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(editor.doc.get(id)).toMatchObject({ text: 'Контур оплаты' });
+  });
+
+  it('turns the field of a lane title bottom to top', () => {
+    const { field } = editing('lane');
+    expect(field.style.transform).toBe('rotate(-90deg)');
+    // До поворота ширина поля — высота дорожки.
+    expect(field.style.width).toBe('180px');
+  });
+});

@@ -1,13 +1,11 @@
 import type { Point } from '../canvas/camera';
 
 /**
- * rounded — прямоугольник с заметно скруглёнными углами, triangle — равнобедренный
- * треугольник вершиной вверх, sticky — стикер, path — рукописный штрих, который не распознан.
+ * Вид фигуры. Как каждая выглядит, где у неё текст и как в неё попадает указатель,
+ * описывает каталог model/shapes.ts. path — рукописный штрих, который не распознан.
  */
-export type ShapeKind =
-  'rectangle' | 'rounded' | 'ellipse' | 'diamond' | 'triangle' | 'sticky' | 'text' | 'path';
-
-export const SHAPE_KINDS: readonly ShapeKind[] = [
+export const SHAPE_KINDS = [
+  // Основные
   'rectangle',
   'rounded',
   'ellipse',
@@ -15,8 +13,40 @@ export const SHAPE_KINDS: readonly ShapeKind[] = [
   'triangle',
   'sticky',
   'text',
+  'note',
+  // Блок-схемы
+  'terminal',
+  'data',
+  'document',
+  'subprocess',
+  'hexagon',
+  // Инфраструктура и C4
+  'database',
+  'queue',
+  'server',
+  'cloud',
+  'person',
+  'browser',
+  'mobile',
+  // UML и ER
+  'class',
+  'entity',
+  'component',
+  'package',
+  'actor',
+  'lifeline',
+  // BPMN
+  'startEvent',
+  'endEvent',
+  'gateway',
+  // Контейнеры: в них кладут другие фигуры
+  'frame',
+  'group',
+  'lane',
   'path',
-];
+] as const;
+
+export type ShapeKind = (typeof SHAPE_KINDS)[number];
 
 /** straight — отрезок между концами, elbow — ломаная из горизонтальных и вертикальных участков. */
 export type ArrowRoute = 'straight' | 'elbow';
@@ -102,6 +132,11 @@ export interface ArrowEnd {
   x: number;
   y: number;
   shapeId?: string;
+  /**
+   * Точка привязки в долях рамки фигуры. Есть только у концов, привязанных к линии жизни:
+   * сообщение остаётся на той высоте, где его провели.
+   */
+  anchor?: Point;
 }
 
 export interface ArrowElement extends ArrowStyle {

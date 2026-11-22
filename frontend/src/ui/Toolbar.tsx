@@ -4,7 +4,7 @@ import { ArrowStyleControls } from './ArrowStyleControls';
 import { type IconName, ToolIcon } from './ToolIcon';
 import styles from './Toolbar.module.css';
 
-const TOOLS: readonly { id: Tool; label: string; key: string }[] = [
+const TOOLS: readonly { id: Tool & IconName; label: string; key: string }[] = [
   { id: 'select', label: 'Выделение', key: 'V' },
   { id: 'pen', label: 'Рисование', key: 'P' },
   { id: 'rectangle', label: 'Прямоугольник', key: 'R' },
@@ -52,6 +52,8 @@ export function Toolbar({
   arrowStyle,
   selectionArrowStyle,
   onArrowStyleChange,
+  shapesOpen,
+  onShapesToggle,
   onUndo,
   onRedo,
 }: {
@@ -64,6 +66,9 @@ export function Toolbar({
   /** Вид выделенных стрелок; если они выделены, переключатели меняют их. */
   selectionArrowStyle: MixedArrowStyle | null;
   onArrowStyleChange: (patch: Partial<ArrowStyle>) => void;
+  /** Открыта ли панель «Фигуры». */
+  shapesOpen: boolean;
+  onShapesToggle: () => void;
   onUndo: () => void;
   onRedo: () => void;
 }) {
@@ -79,6 +84,16 @@ export function Toolbar({
           onClick={() => onChange(t.id)}
         />
       ))}
+      <button
+        type="button"
+        className={styles.button}
+        aria-label="Фигуры"
+        title="Фигуры: блок-схемы, инфраструктура, UML, ER, BPMN, контейнеры"
+        aria-pressed={shapesOpen}
+        onClick={onShapesToggle}
+      >
+        <ToolIcon name="shapes" />
+      </button>
       {tool === 'pen' && (
         <label
           className={styles.switch}

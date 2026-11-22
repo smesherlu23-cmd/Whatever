@@ -1,5 +1,6 @@
+import { type Hull, shapeSpec } from './shapes';
 import { LABEL_FONT_SIZE, estimateMeasure, labelLayout } from './textLayout';
-import type { ArrowElement, BoardElement, Bounds, Point, ShapeElement } from './types';
+import type { ArrowElement, ArrowEnd, BoardElement, Bounds, Point, ShapeElement } from './types';
 import { isArrow } from './types';
 
 export function normalizeBounds(a: Point, b: Point): Bounds {
@@ -82,15 +83,6 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-/** Вершины треугольника, вписанного в рамку: вершина посередине сверху, основание снизу. */
-export function trianglePoints(b: Bounds): [Point, Point, Point] {
-  return [
-    { x: b.x + b.w / 2, y: b.y },
-    { x: b.x + b.w, y: b.y + b.h },
-    { x: b.x, y: b.y + b.h },
-  ];
-}
-
 /** Пары соседних вершин замкнутого многоугольника, включая последнюю с первой. */
 function* edges(polygon: readonly Point[]): Generator<[Point, Point]> {
   yield* segments(polygon);
@@ -117,6 +109,13 @@ function rayExit(origin: Point, direction: Point, polygon: readonly Point[]): nu
   return Number.isFinite(best) ? best : 0;
 }
 
+const RECT_HULL: Hull = { type: 'rect' };
+
+/** Форма фигуры для попадания и привязки. Рукописный штрих считается своей рамкой. */
+function hullOf(shape: ShapeElement): Hull {
+  return shape.kind === 'path' ? RECT_HULL : shapeSpec(shape.kind).hull;
+}
+
 /** Точка на границе фигуры по направлению из её центра к точке toward. */
 export function boundaryPoint(shape: ShapeElement, toward: Point): Point {
   const c = center(shape);
@@ -125,24 +124,44 @@ export function boundaryPoint(shape: ShapeElement, toward: Point): Point {
   const hw = shape.w / 2;
   const hh = shape.h / 2;
   if ((dx === 0 && dy === 0) || hw === 0 || hh === 0) return c;
+  const hull = hullOf(shape);
   let t: number;
-  switch (shape.kind) {
+  switch (hull.type) {
     case 'ellipse':
       t = 1 / Math.sqrt((dx / hw) ** 2 + (dy / hh) ** 2);
       break;
-    case 'diamond':
-      t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+    case 'polygon':
+      t = rayExit(c, { x: dx, y: dy }, hull.points(shape));
       break;
-    case 'triangle':
-      t = rayExit(c, { x: dx, y: dy }, trianglePoints(shape));
-      break;
-    default:
+    case 'rect':
       t = Math.min(
         dx === 0 ? Infinity : hw / Math.abs(dx),
         dy === 0 ? Infinity : hh / Math.abs(dy),
       );
   }
   return { x: c.x + dx * t, y: c.y + dy * t };
+}
+
+/** Привязывает ли фигура конец стрелки к точке на своей оси, а не к краю. */
+export function isAnchored(shape: ShapeElement): boolean {
+  return shape.kind !== 'path' && shapeSpec(shape.kind).anchored === true;
+}
+
+/**
+ * Конец стрелки, привязанный к фигуре в точке world. У линии жизни запоминается высота,
+ * на которой её коснулись: сообщения в диаграмме последовательности идут на своём уровне.
+ */
+export function bindEnd(shape: ShapeElement, world: Point): ArrowEnd {
+  const end: ArrowEnd = { x: world.x, y: world.y, shapeId: shape.id };
+  if (!isAnchored(shape) || shape.h === 0) return end;
+  const fy = Math.max(0, Math.min(1, (world.y - shape.y) / shape.h));
+  return { ...end, anchor: { x: 0.5, y: fy } };
+}
+
+/** Точка привязки на оси фигуры или null, если конец цепляется к краю фигуры. */
+function anchorPoint(shape: ShapeElement, end: ArrowEnd): Point | null {
+  if (!end.anchor || !isAnchored(shape)) return null;
+  return { x: shape.x + shape.w * end.anchor.x, y: shape.y + shape.h * end.anchor.y };
 }
 
 /** Внутри ли точка выпуклого многоугольника, обходимого по часовой стрелке (на экране). */
@@ -188,6 +207,20 @@ function elbowPath(
   startShape: ShapeElement | undefined,
   endShape: ShapeElement | undefined,
 ): ArrowPath {
+  // Конец, привязанный к оси линии жизни, ведёт себя как свободная точка на этой оси.
+  const startAnchor = startShape && anchorPoint(startShape, arrow.start);
+  const endAnchor = endShape && anchorPoint(endShape, arrow.end);
+  if (startAnchor || endAnchor) {
+    return elbowPath(
+      {
+        ...arrow,
+        start: startAnchor ?? arrow.start,
+        end: endAnchor ?? arrow.end,
+      },
+      startAnchor ? undefined : startShape,
+      endAnchor ? undefined : endShape,
+    );
+  }
   const from = startShape ? center(startShape) : arrow.start;
   const to = endShape ? center(endShape) : arrow.end;
   const horizontal = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
@@ -233,14 +266,24 @@ export function arrowPath(arrow: ArrowElement, lookup: ElementLookup): ArrowPath
   const startShape = boundShape(lookup, arrow.start.shapeId);
   const endShape = boundShape(lookup, arrow.end.shapeId);
   if (arrow.route === 'elbow') return elbowPath(arrow, startShape, endShape);
-  const startAnchor = startShape ? center(startShape) : arrow.start;
-  const endAnchor = endShape ? center(endShape) : arrow.end;
+  const startFixed = startShape && anchorPoint(startShape, arrow.start);
+  const endFixed = endShape && anchorPoint(endShape, arrow.end);
+  // Направление на другой конец: от его точки привязки или центра его фигуры.
+  const startAim = startFixed ?? (startShape ? center(startShape) : arrow.start);
+  const endAim = endFixed ?? (endShape ? center(endShape) : arrow.end);
+  const resolve = (
+    end: ArrowEnd,
+    shape: ShapeElement | undefined,
+    fixed: Point | null | undefined,
+    aim: Point,
+  ): Point => {
+    if (fixed) return fixed;
+    return shape ? boundaryPoint(shape, aim) : { x: end.x, y: end.y };
+  };
   return {
-    start: startShape
-      ? boundaryPoint(startShape, endAnchor)
-      : { x: arrow.start.x, y: arrow.start.y },
+    start: resolve(arrow.start, startShape, startFixed, endAim),
     bends: [],
-    end: endShape ? boundaryPoint(endShape, startAnchor) : { x: arrow.end.x, y: arrow.end.y },
+    end: resolve(arrow.end, endShape, endFixed, startAim),
   };
 }
 
@@ -331,10 +374,13 @@ export function hitTest(
     }
     return false;
   }
-  if (el.kind === 'triangle') {
-    const triangle = trianglePoints(el);
-    if (insideConvex(p, triangle)) return true;
-    for (const [a, b] of edges(triangle)) {
+  const spec = shapeSpec(el.kind);
+  if (spec.hit) return spec.hit(el, p, tolerance);
+  const { hull } = spec;
+  if (hull.type === 'polygon') {
+    const polygon = hull.points(el);
+    if (insideConvex(p, polygon)) return true;
+    for (const [a, b] of edges(polygon)) {
       if (distanceToSegment(p, a, b) <= tolerance) return true;
     }
     return false;
@@ -344,12 +390,5 @@ export function hitTest(
   const hh = el.h / 2 + tolerance;
   const dx = Math.abs(p.x - c.x);
   const dy = Math.abs(p.y - c.y);
-  switch (el.kind) {
-    case 'ellipse':
-      return (dx / hw) ** 2 + (dy / hh) ** 2 <= 1;
-    case 'diamond':
-      return dx / hw + dy / hh <= 1;
-    default:
-      return dx <= hw && dy <= hh;
-  }
+  return hull.type === 'ellipse' ? (dx / hw) ** 2 + (dy / hh) ** 2 <= 1 : dx <= hw && dy <= hh;
 }

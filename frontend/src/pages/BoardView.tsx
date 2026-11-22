@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Board } from '../canvas/Board';
 import type { Presence } from '../collab/presence';
 import type { Editor } from '../editor/Editor';
 import { TextEditor } from '../editor/TextEditor';
 import { useEditorState } from '../editor/useEditorState';
+import { ShapePanel } from '../ui/ShapePanel';
 import { Toolbar } from '../ui/Toolbar';
 import { PageTabs } from './board/PageTabs';
 import styles from './pages.module.css';
@@ -19,6 +20,7 @@ export function BoardView({
   header: ReactNode;
 }) {
   const state = useEditorState(editor);
+  const [shapesOpen, setShapesOpen] = useState(false);
   return (
     <div className={styles.app}>
       {header}
@@ -41,11 +43,20 @@ export function BoardView({
               arrowStyle={state.arrowStyle}
               selectionArrowStyle={state.selectionArrowStyle}
               onArrowStyleChange={(patch) => editor.setArrowStyle(patch)}
+              shapesOpen={shapesOpen}
+              onShapesToggle={() => setShapesOpen(!shapesOpen)}
               onUndo={() => editor.undo()}
               onRedo={() => editor.redo()}
             />
           )}
         </div>
+        {shapesOpen && !state.readOnly && (
+          <ShapePanel
+            tool={state.tool}
+            onPick={(tool, preset) => editor.setTool(tool, preset)}
+            onClose={() => setShapesOpen(false)}
+          />
+        )}
         <PageTabs editor={editor} pageId={state.pageId} readOnly={state.readOnly} />
         <div className={styles.zoom} aria-live="polite">
           {Math.round(state.camera.zoom * 100)}%

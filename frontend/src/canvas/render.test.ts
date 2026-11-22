@@ -274,3 +274,61 @@ describe('renderBoard arrows', () => {
     expect(named(calls, 'rotate').length).toBe(heads.length - 1);
   });
 });
+
+describe('renderBoard catalog shapes', () => {
+  it('draws the compartments of a class with lines between them', () => {
+    const editor = new Editor();
+    editor.doc.add(
+      shape('c', 0, 0, {
+        kind: 'class',
+        w: 200,
+        h: 120,
+        text: 'Заказ\n--\nid: uuid\n--\nоплатить()',
+      }),
+    );
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+
+    expect(named(calls, 'fillText').map(([, text, x]) => [text, x])).toEqual([
+      ['Заказ', 100],
+      ['id: uuid', 8],
+      ['оплатить()', 8],
+    ]);
+    // Две секции под именем — две линии через всю ширину.
+    const separators = named(calls, 'lineTo').filter(([, x]) => x === 200);
+    expect(separators).toHaveLength(2);
+    expect(named(calls, 'set font').map(([, font]) => font)).toContain('600 14px sans-serif');
+  });
+
+  it('writes container titles on one line and a lane title bottom to top', () => {
+    const editor = new Editor();
+    editor.doc.add(
+      shape('f', 0, 0, { kind: 'group', w: 300, h: 200, text: 'Платёжный контур\nвторая строка' }),
+    );
+    editor.doc.add(shape('l', 0, 300, { kind: 'lane', w: 500, h: 150, text: 'Бухгалтерия' }));
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+
+    expect(named(calls, 'fillText').map(([, text]) => text)).toEqual([
+      'Платёжный контур',
+      'Бухгалтерия',
+    ]);
+    expect(named(calls, 'rotate')).toContainEqual(['rotate', -Math.PI / 2]);
+    // Граница группы пунктиром.
+    expect(named(calls, 'setLineDash').map(([, dash]) => dash)).toContainEqual([6, 5]);
+  });
+
+  it('cuts a long title with an ellipsis and draws a bold end event', () => {
+    const editor = new Editor();
+    editor.doc.add(
+      shape('f', 0, 0, { kind: 'frame', w: 120, h: 100, text: 'Очень длинное название рамки' }),
+    );
+    editor.doc.add(shape('e', 300, 0, { kind: 'endEvent', w: 44, h: 44, text: 'Готово', z: 2 }));
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+
+    const [title] = named(calls, 'fillText');
+    expect(String(title?.[1])).toMatch(/…$/);
+    expect(named(calls, 'set lineWidth').map(([, width]) => width)).toContain(3.5);
+  });
+});
