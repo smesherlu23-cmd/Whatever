@@ -1,9 +1,11 @@
-import { BoardDocument, newId } from '../model/document';
-import { normalizePath } from '../model/geometry';
+import type { BoardDocument } from '../model/document';
+import { newId } from '../model/ids';
+import { bindEnd, normalizePath } from '../model/geometry';
 import { bindTargetAt, isConnectable } from '../model/queries';
 import {
   type ArrowEnd,
   type BoardElement,
+  DEFAULT_ARROW_STYLE,
   DEFAULT_FILL,
   DEFAULT_STROKE,
   type Point,
@@ -19,11 +21,12 @@ const ALIGN_DISTANCE_PX = 12;
 type Shape = Exclude<Recognized, { kind: 'none' }>;
 
 /**
- * Сохраняет рукописный штрих и, если он распознан, заменяет его ровной фигурой.
- * Замена — отдельный шаг отмены: одно Ctrl+Z возвращает набросок, второе убирает его.
+ * Сохраняет рукописный штрих на странице page и, если он распознан, заменяет его ровной
+ * фигурой. Замена — отдельный шаг отмены: одно Ctrl+Z возвращает набросок, второе убирает его.
  */
 export function commitStroke(
   doc: BoardDocument,
+  page: string,
   stroke: readonly Point[],
   result: Recognized | null,
   zoom: number,
@@ -34,6 +37,7 @@ export function commitStroke(
   doc.add({
     id: pathId,
     kind: 'path',
+    page,
     ...bounds,
     points,
     text: '',
@@ -44,7 +48,7 @@ export function commitStroke(
   doc.stopCapturing();
 
   if (!result || result.kind === 'none') return;
-  const element = toElement(doc, result, pathId, zoom);
+  const element = toElement(doc, page, result, pathId, zoom);
   if (!element) return;
   doc.transact(() => {
     doc.remove([pathId]);
@@ -55,26 +59,38 @@ export function commitStroke(
 
 function toElement(
   doc: BoardDocument,
+  page: string,
   result: Shape,
   pathId: string,
   zoom: number,
 ): BoardElement | null {
   const id = newId();
   const z = doc.nextZ();
+  const source = doc.page(page);
 
   if (result.kind === 'line') {
     const tolerance = BIND_DISTANCE_PX / zoom;
-    const from = bindTargetAt(doc, result.start, tolerance, pathId);
-    const to = bindTargetAt(doc, result.end, tolerance, pathId);
+    const from = bindTargetAt(source, result.start, tolerance, pathId);
+    const to = bindTargetAt(source, result.end, tolerance, pathId);
     // Петля на одной фигуре — скорее каракуля, чем связь: оставляем набросок.
     if (from !== undefined && from.id === to?.id) return null;
     const straight = straightenLine(result.start, result.end);
-    const start: ArrowEnd = from ? { ...result.start, shapeId: from.id } : straight.start;
-    const end: ArrowEnd = to ? { ...result.end, shapeId: to.id } : straight.end;
-    return { id, kind: 'arrow', start, end, route: 'straight', stroke: DEFAULT_STROKE, z };
+    const start: ArrowEnd = from ? bindEnd(from, result.start) : straight.start;
+    const end: ArrowEnd = to ? bindEnd(to, result.end) : straight.end;
+    return {
+      id,
+      kind: 'arrow',
+      page,
+      start,
+      end,
+      text: '',
+      ...DEFAULT_ARROW_STYLE,
+      stroke: DEFAULT_STROKE,
+      z,
+    };
   }
 
-  const neighbours = doc
+  const neighbours = source
     .list()
     .filter(isConnectable)
     .filter((el) => el.kind !== 'text');
@@ -82,6 +98,7 @@ function toElement(
   return {
     id,
     kind: result.kind,
+    page,
     ...bounds,
     text: '',
     stroke: DEFAULT_STROKE,

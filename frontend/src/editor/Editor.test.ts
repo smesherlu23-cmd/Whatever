@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
-import { DEFAULT_STICKY_FILL } from '../model/types';
+import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE } from '../model/types';
 import { Editor } from './Editor';
 
 function drag(editor: Editor, from: [number, number], to: [number, number], shift = false) {
@@ -48,12 +48,12 @@ describe('Editor', () => {
 
   it('draws elbow arrows and switches selected arrows in one undo step', () => {
     const editor = new Editor();
-    editor.setArrowRoute('elbow');
+    editor.setArrowStyle({ route: 'elbow' });
     editor.setTool('arrow');
     drag(editor, [0, 0], [200, 100]);
     // Новая стрелка остаётся выделенной: снимаем выделение, чтобы не переключить и её.
     editor.select([]);
-    editor.setArrowRoute('straight');
+    editor.setArrowStyle({ route: 'straight' });
     editor.setTool('arrow');
     drag(editor, [0, 300], [200, 400]);
     const [elbow, straight] = takeTwo(arrows(editor.doc));
@@ -61,15 +61,47 @@ describe('Editor', () => {
     expect(straight.route).toBe('straight');
 
     editor.select([elbow.id, straight.id]);
-    expect(editor.getState().selectionRoute).toBe('mixed');
-    editor.setArrowRoute('elbow');
+    expect(editor.getState().selectionArrowStyle).toMatchObject({ route: null, endHead: 'arrow' });
+    editor.setArrowStyle({ route: 'elbow' });
     expect(arrows(editor.doc).map((a) => a.route)).toEqual(['elbow', 'elbow']);
-    expect(editor.getState().selectionRoute).toBe('elbow');
+    expect(editor.getState().selectionArrowStyle?.route).toBe('elbow');
     editor.undo();
     expect(arrows(editor.doc).map((a) => a.route)).toEqual(['elbow', 'straight']);
 
     editor.select([]);
-    expect(editor.getState().selectionRoute).toBeNull();
+    expect(editor.getState().selectionArrowStyle).toBeNull();
+  });
+
+  it('draws new arrows with the chosen heads and dash, and restyles selected ones', () => {
+    const editor = new Editor();
+    editor.setArrowStyle({ startHead: 'diamond', endHead: 'open', dashed: true });
+    editor.setTool('arrow');
+    drag(editor, [0, 0], [200, 0]);
+    const arrow = defined(arrows(editor.doc)[0]);
+    expect(arrow).toMatchObject({ startHead: 'diamond', endHead: 'open', dashed: true, text: '' });
+
+    const before = editor.getState().selectionArrowStyle;
+    editor.pointerMove({ x: 5, y: 5 });
+    // Пока вид выделенных стрелок тот же, состояние отдаёт тот же объект.
+    expect(editor.getState().selectionArrowStyle).toBe(before);
+    editor.setArrowStyle({ endHead: 'triangle' });
+    expect(editor.doc.get(arrow.id)).toMatchObject({ endHead: 'triangle', startHead: 'diamond' });
+    expect(editor.arrowStyle).toMatchObject({ endHead: 'triangle', dashed: true });
+  });
+
+  it('edits the label of an arrow on double click', () => {
+    const editor = new Editor();
+    editor.setTool('arrow');
+    drag(editor, [0, 0], [200, 0]);
+    const arrow = defined(arrows(editor.doc)[0]);
+    editor.select([]);
+    editor.doubleClick({ x: 100, y: 1 });
+    expect(editor.editingId).toBe(arrow.id);
+    editor.setEditingText('HTTPS');
+    editor.stopEditing();
+    expect(editor.doc.get(arrow.id)).toMatchObject({ text: 'HTTPS' });
+    // По подписи теперь тоже можно попасть, даже если она шире линии.
+    expect(editor.elementAt({ x: 100, y: 8 })?.id).toBe(arrow.id);
   });
 
   it('moves the selection and undoes the whole drag in one step', () => {
@@ -96,6 +128,65 @@ describe('Editor', () => {
     drag(editor, [0, 0], [100, 100]);
     drag(editor, [100, 100], [150, 120]);
     expect(shapes(editor.doc)[0]).toMatchObject({ x: 0, y: 0, w: 150, h: 120 });
+  });
+
+  it('keeps the proportions of a picture unless Shift is held', () => {
+    const editor = new Editor();
+    const file = { id: 'f1', name: 'схема.png', size: 10, type: 'image/png' };
+    editor.insert([
+      {
+        id: 'p',
+        kind: 'image',
+        page: editor.pageId,
+        x: 0,
+        y: 0,
+        w: 200,
+        h: 100,
+        text: '',
+        stroke: DEFAULT_STROKE,
+        fill: DEFAULT_FILL,
+        z: 1,
+        file,
+      },
+    ]);
+    drag(editor, [200, 100], [300, 110]);
+    expect(shapes(editor.doc)[0]).toMatchObject({ w: 300, h: 150 });
+    drag(editor, [300, 150], [320, 300], true);
+    expect(shapes(editor.doc)[0]).toMatchObject({ w: 320, h: 300 });
+  });
+
+  it('finds the file under the pointer and inserts elements as one undo step', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    expect(editor.viewportCenter()).toEqual({ x: 400, y: 300 });
+    const file = { id: 'f1', name: 'план.pdf', size: 10, type: 'application/octet-stream' };
+    const card = {
+      id: 'c',
+      kind: 'file' as const,
+      page: editor.pageId,
+      x: 0,
+      y: 0,
+      w: 260,
+      h: 72,
+      text: '',
+      stroke: DEFAULT_STROKE,
+      fill: DEFAULT_FILL,
+      z: 1,
+      file,
+    };
+    editor.insert([card, { ...card, id: 'elsewhere', page: 'other', x: 400 }]);
+    expect([...editor.selection]).toEqual(['c']);
+    expect(editor.attachmentAt({ x: 100, y: 30 })).toEqual(file);
+    expect(editor.attachmentAt({ x: 600, y: 400 })).toBeUndefined();
+    // Двойной щелчок по вложению не открывает ввод текста: у карточки его нет.
+    editor.doubleClick({ x: 100, y: 30 });
+    expect(editor.editingId).toBeNull();
+
+    editor.undo();
+    expect(editor.doc.size).toBe(0);
+    editor.setReadOnly(true);
+    editor.insert([card]);
+    expect(editor.doc.size).toBe(0);
   });
 
   it('selects shapes fully inside the marquee', () => {
@@ -242,7 +333,7 @@ describe('Editor in read-only mode', () => {
     expect(editor.editingId).toBeNull();
     editor.deleteSelection();
     editor.duplicateSelection();
-    editor.setArrowRoute('elbow');
+    editor.setArrowStyle({ route: 'elbow' });
     editor.undo();
     expect(editor.keyDown({ key: 'Delete' })).toBe(true);
     expect(editor.doc.list()).toEqual(before);

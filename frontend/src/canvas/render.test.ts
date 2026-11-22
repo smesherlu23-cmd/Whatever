@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { Peer } from '../collab/presence';
 import { Editor } from '../editor/Editor';
 import {
+  type ArrowElement,
   DEFAULT_FILL,
   DEFAULT_STICKY_FILL,
   DEFAULT_STROKE,
   type ShapeElement,
 } from '../model/types';
-import { type Theme, renderBoard } from './render';
+import { renderBoard } from './render';
+import type { Theme } from './scene';
 
 const theme: Theme = {
   background: '#f4f4f5',
@@ -19,8 +21,12 @@ const theme: Theme = {
   shapeStroke: '#43434a',
   shapeFill: '#ffffff',
   stickyFill: '#5b5131',
+  muted: '#76767f',
+  placeholder: '#eeeef0',
   fontFamily: 'sans-serif',
 };
+
+const frame = { width: 800, height: 600, dpr: 1, theme };
 
 type Call = [method: string, ...args: unknown[]];
 
@@ -47,6 +53,7 @@ function shape(id: string, x: number, y: number, extra: Partial<ShapeElement> = 
   return {
     id,
     kind: 'rectangle',
+    page: 'main',
     x,
     y,
     w: 100,
@@ -73,7 +80,7 @@ describe('renderBoard', () => {
     };
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, dark);
+    renderBoard(ctx, editor, { ...frame, theme: dark });
 
     const values = (prop: string) => named(calls, `set ${prop}`).map(([, value]) => value);
     expect(values('fillStyle')).toContain('#2c2c31');
@@ -87,7 +94,7 @@ describe('renderBoard', () => {
     editor.doc.add(shape('offscreen', 5000, 5000, { text: 'Не видно' }));
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual(['Видно']);
   });
@@ -99,7 +106,12 @@ describe('renderBoard', () => {
     editor.doc.add({
       id: 'arrow',
       kind: 'arrow',
+      page: 'main',
       route: 'straight',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+      text: '',
       start: { x: 0, y: 0, shapeId: 'a' },
       end: { x: 300, y: 300 },
       stroke: DEFAULT_STROKE,
@@ -108,7 +120,7 @@ describe('renderBoard', () => {
     editor.select(['a']);
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     expect(named(calls, 'roundRect').length).toBeGreaterThan(0);
     // Наконечник стрелки — закрашенный треугольник, ручки выделения — восемь квадратов.
@@ -123,7 +135,7 @@ describe('renderBoard', () => {
     editor.doc.add(shape('u', 400, 0, { kind: 'rounded' }));
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     const moves = named(calls, 'moveTo').map(([, x, y]) => [x, y]);
     expect(moves).toContainEqual([50, 0]);
@@ -147,7 +159,12 @@ describe('renderBoard', () => {
     editor.doc.add({
       id: 'arrow',
       kind: 'arrow',
+      page: 'main',
       route: 'elbow',
+      startHead: 'none',
+      endHead: 'arrow',
+      dashed: false,
+      text: '',
       start: { x: 0, y: 0 },
       end: { x: 100, y: 40 },
       stroke: DEFAULT_STROKE,
@@ -155,7 +172,7 @@ describe('renderBoard', () => {
     });
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 1, theme);
+    renderBoard(ctx, editor, frame);
 
     const points = named(calls, 'lineTo').map(([, x, y]) => [x, y]);
     expect(points.slice(0, 3)).toEqual([
@@ -171,13 +188,195 @@ describe('renderBoard', () => {
       clientId: 7,
       name: 'Анна',
       color: '#d1495b',
+      page: 'main',
       cursor: { x: 100, y: 100 },
       selection: [],
     };
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 2, theme, [peer]);
+    renderBoard(ctx, editor, {
+      ...frame,
+      dpr: 2,
+      peers: [peer, { ...peer, name: 'Олег', page: 'p2' }],
+    });
 
+    // Олег смотрит другую страницу: его курсора здесь нет.
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual(['Анна']);
+  });
+});
+
+describe('renderBoard arrows', () => {
+  const arrow: ArrowElement = {
+    id: 'arrow',
+    kind: 'arrow',
+    page: 'main',
+    route: 'straight',
+    startHead: 'filledDiamond',
+    endHead: 'triangle',
+    dashed: true,
+    text: 'Заказ',
+    start: { x: 0, y: 0 },
+    end: { x: 200, y: 0 },
+    stroke: DEFAULT_STROKE,
+    z: 1,
+  };
+
+  it('draws a dashed line that stops short of hollow and filled heads', () => {
+    const editor = new Editor();
+    editor.doc.add(arrow);
+    const { ctx, calls } = recordingContext();
+
+    renderBoard(ctx, editor, frame);
+
+    expect(named(calls, 'setLineDash').map(([, dash]) => dash)).toContainEqual([6, 5]);
+    // Линия начинается за ромбом (18) и кончается у основания треугольника (200 − 14).
+    expect(named(calls, 'moveTo')).toContainEqual(['moveTo', 18, 0]);
+    expect(named(calls, 'lineTo')).toContainEqual(['lineTo', 186, 0]);
+    // Пустой треугольник залит фоном, закрашенный ромб — цветом линии.
+    const fills = named(calls, 'set fillStyle').map(([, value]) => value);
+    expect(fills).toEqual(expect.arrayContaining([theme.background, theme.shapeStroke]));
+  });
+
+  it('draws the label on a backing in the middle of the line, but not while it is edited', () => {
+    const editor = new Editor();
+    editor.doc.add(arrow);
+    const first = recordingContext();
+    renderBoard(first.ctx, editor, frame);
+    expect(named(first.calls, 'fillText')).toEqual([['fillText', 'Заказ', 100, 0]]);
+
+    editor.startEditing('arrow');
+    const second = recordingContext();
+    renderBoard(second.ctx, editor, frame);
+    expect(named(second.calls, 'fillText')).toEqual([]);
+  });
+
+  it('draws every kind of head', () => {
+    const editor = new Editor();
+    const heads = [
+      'none',
+      'arrow',
+      'open',
+      'diamond',
+      'circle',
+      'one',
+      'zeroOrOne',
+      'many',
+      'zeroOrMany',
+    ] as const;
+    // Начало без наконечника, чтобы считать только концы.
+    heads.forEach((head, i) => {
+      editor.doc.add({
+        ...arrow,
+        id: head,
+        text: '',
+        startHead: 'none',
+        endHead: head,
+        start: { x: 0, y: i * 40 },
+        end: { x: 200, y: i * 40 },
+      });
+    });
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, frame);
+    expect(named(calls, 'arc').length).toBeGreaterThanOrEqual(3);
+    // Каждый наконечник, кроме 'none', поворачивается вдоль линии.
+    expect(named(calls, 'rotate').length).toBe(heads.length - 1);
+  });
+});
+
+describe('renderBoard catalog shapes', () => {
+  it('draws the compartments of a class with lines between them', () => {
+    const editor = new Editor();
+    editor.doc.add(
+      shape('c', 0, 0, {
+        kind: 'class',
+        w: 200,
+        h: 120,
+        text: 'Заказ\n--\nid: uuid\n--\nоплатить()',
+      }),
+    );
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, frame);
+
+    expect(named(calls, 'fillText').map(([, text, x]) => [text, x])).toEqual([
+      ['Заказ', 100],
+      ['id: uuid', 8],
+      ['оплатить()', 8],
+    ]);
+    // Две секции под именем — две линии через всю ширину.
+    const separators = named(calls, 'lineTo').filter(([, x]) => x === 200);
+    expect(separators).toHaveLength(2);
+    expect(named(calls, 'set font').map(([, font]) => font)).toContain('600 14px sans-serif');
+  });
+
+  it('writes container titles on one line and a lane title bottom to top', () => {
+    const editor = new Editor();
+    editor.doc.add(
+      shape('f', 0, 0, { kind: 'group', w: 300, h: 200, text: 'Платёжный контур\nвторая строка' }),
+    );
+    editor.doc.add(shape('l', 0, 300, { kind: 'lane', w: 500, h: 150, text: 'Бухгалтерия' }));
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, frame);
+
+    expect(named(calls, 'fillText').map(([, text]) => text)).toEqual([
+      'Платёжный контур',
+      'Бухгалтерия',
+    ]);
+    expect(named(calls, 'rotate')).toContainEqual(['rotate', -Math.PI / 2]);
+    // Граница группы пунктиром.
+    expect(named(calls, 'setLineDash').map(([, dash]) => dash)).toContainEqual([6, 5]);
+  });
+
+  it('cuts a long title with an ellipsis and draws a bold end event', () => {
+    const editor = new Editor();
+    editor.doc.add(
+      shape('f', 0, 0, { kind: 'frame', w: 120, h: 100, text: 'Очень длинное название рамки' }),
+    );
+    editor.doc.add(shape('e', 300, 0, { kind: 'endEvent', w: 44, h: 44, text: 'Готово', z: 2 }));
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, frame);
+
+    const [title] = named(calls, 'fillText');
+    expect(String(title?.[1])).toMatch(/…$/);
+    expect(named(calls, 'set lineWidth').map(([, width]) => width)).toContain(3.5);
+  });
+});
+
+describe('renderBoard files', () => {
+  const file = { id: 'f1', name: 'Схема сети.png', size: 3 * 1024 * 1024, type: 'image/png' };
+
+  it('draws a loaded picture and a placeholder while it loads', () => {
+    const editor = new Editor();
+    editor.doc.add(shape('p', 0, 0, { kind: 'image', w: 300, h: 200, file }));
+    const picture = { width: 300, height: 200 } as unknown as CanvasImageSource;
+
+    const waiting = recordingContext();
+    renderBoard(waiting.ctx, editor, { ...frame, images: () => null });
+    expect(named(waiting.calls, 'drawImage')).toEqual([]);
+    expect(named(waiting.calls, 'fillRect')).toContainEqual(['fillRect', 0, 0, 300, 200]);
+    expect(named(waiting.calls, 'set fillStyle').map(([, color]) => color)).toContain(
+      theme.placeholder,
+    );
+
+    const loaded = recordingContext();
+    renderBoard(loaded.ctx, editor, {
+      ...frame,
+      images: (id) => (id === 'f1' ? picture : null),
+    });
+    expect(named(loaded.calls, 'drawImage')).toEqual([['drawImage', picture, 0, 0, 300, 200]]);
+  });
+
+  it('writes the name and size on an attachment card, never its text', () => {
+    const editor = new Editor();
+    const pdf = { ...file, name: 'Регламент.pdf', type: 'application/octet-stream' };
+    editor.doc.add(
+      shape('c', 0, 0, { kind: 'file', w: 260, h: 72, text: 'чужой текст', file: pdf }),
+    );
+    const { ctx, calls } = recordingContext();
+    renderBoard(ctx, editor, frame);
+
+    expect(named(calls, 'fillText').map(([, text]) => text)).toEqual([
+      'Регламент.pdf',
+      'PDF · 3 МБ',
+    ]);
   });
 });

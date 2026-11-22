@@ -1,9 +1,11 @@
 import * as Y from 'yjs';
-import type { ArrowEnd, BoardElement } from './types';
-import { isArrow } from './types';
-import { parseElement } from './validate';
+import { cloneElements } from './clone';
+import { newId } from './ids';
+import type { ArrowEnd, BoardElement, Page } from './types';
+import { DEFAULT_PAGE, isArrow } from './types';
+import { parseElement, parsePage } from './validate';
 
-type ElementMap = Y.Map<unknown>;
+type FieldMap = Y.Map<unknown>;
 
 /** Происхождение локальных правок: только их отменяет Ctrl+Z, чужие правки не трогаются. */
 const LOCAL = Symbol('local-edit');
@@ -11,37 +13,87 @@ const LOCAL = Symbol('local-edit');
 /** Правки, сделанные быстрее этого интервала, объединяются в один шаг отмены. */
 const UNDO_CAPTURE_MS = 400;
 
-interface Snapshot {
+/** Название страницы с номером n, пока её не переименовали. */
+export function pageName(n: number): string {
+  return `Страница ${n}`;
+}
+
+export const DEFAULT_PAGE_NAME = pageName(1);
+
+/**
+ * Пока у доски одна страница, она не записана в документ: так выглядят доски, нарисованные
+ * до появления страниц. В документ она попадает при первом изменении списка страниц.
+ */
+const IMPLICIT_PAGES: readonly Page[] = Object.freeze([
+  Object.freeze({ id: DEFAULT_PAGE, name: DEFAULT_PAGE_NAME, order: 0 }),
+]);
+
+const NO_ELEMENTS: readonly BoardElement[] = Object.freeze([]);
+
+/** Если соседние страницы стоят ближе, порядок всех страниц пересчитывается заново. */
+const MIN_ORDER_GAP = 1e-6;
+
+/** Элементы одной страницы: то, что видит и меняет редактор. */
+export interface ElementSource {
   /** Элементы в порядке отрисовки (снизу вверх). */
+  list(): readonly BoardElement[];
+  get(id: string): BoardElement | undefined;
+}
+
+interface Snapshot {
+  /** Все элементы доски в порядке отрисовки. */
   readonly list: readonly BoardElement[];
   readonly byId: ReadonlyMap<string, BoardElement>;
+  readonly byPage: ReadonlyMap<string, readonly BoardElement[]>;
 }
 
 function byZ(a: BoardElement, b: BoardElement): number {
   return a.z - b.z || (a.id < b.id ? -1 : 1);
 }
 
+function byOrder(a: Page, b: Page): number {
+  return a.order - b.order || (a.id < b.id ? -1 : 1);
+}
+
+function fieldMap(fields: object): FieldMap {
+  return new Y.Map<unknown>(Object.entries(fields));
+}
+
+/** Страница элемента прямо из данных Yjs, даже если остальные поля элемента битые. */
+function rawPage(map: FieldMap): string {
+  const page = map.get('page');
+  return typeof page === 'string' ? page : DEFAULT_PAGE;
+}
+
 /**
- * Документ доски поверх Yjs. Каждый элемент хранится в своём Y.Map,
- * поэтому правки разных полей одного элемента от разных людей сливаются без потерь.
+ * Документ доски поверх Yjs. Каждый элемент хранится в своём Y.Map внутри общего
+ * Y.Map("elements"), поэтому правки разных полей одного элемента от разных людей сливаются
+ * без потерь. Страницы — отдельный Y.Map("pages"), а элемент знает id своей страницы.
  *
- * Чтение идёт из неизменяемого снимка, который пересобирается только после изменений:
+ * Чтение идёт из неизменяемых снимков, которые пересобираются только после изменений:
  * поиск под курсором и отрисовка на каждом кадре не копируют данные Yjs заново.
  */
 export class BoardDocument {
   readonly doc: Y.Doc;
-  private readonly elements: Y.Map<ElementMap>;
+  private readonly elements: Y.Map<FieldMap>;
+  private readonly pageMaps: Y.Map<FieldMap>;
   private readonly undoManager: Y.UndoManager;
   private snapshotCache: Snapshot | null = null;
+  private pagesCache: readonly Page[] | null = null;
+  private readonly pageViews = new Map<string, ElementSource>();
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
-    this.elements = doc.getMap<ElementMap>('elements');
-    // Регистрируется первым, чтобы остальные подписчики уже видели свежий снимок.
+    this.elements = doc.getMap<FieldMap>('elements');
+    this.pageMaps = doc.getMap<FieldMap>('pages');
+    // Регистрируются первыми, чтобы остальные подписчики уже видели свежие снимки.
     this.elements.observeDeep(() => {
       this.snapshotCache = null;
     });
-    this.undoManager = new Y.UndoManager(this.elements, {
+    this.pageMaps.observeDeep(() => {
+      this.pagesCache = null;
+    });
+    this.undoManager = new Y.UndoManager([this.elements, this.pageMaps], {
       trackedOrigins: new Set([LOCAL]),
       captureTimeout: UNDO_CAPTURE_MS,
     });
@@ -55,11 +107,21 @@ export class BoardDocument {
         const element = parseElement(map.toJSON());
         if (element) byId.set(element.id, Object.freeze(element));
       });
-      this.snapshotCache = { list: [...byId.values()].sort(byZ), byId };
+      const list = [...byId.values()].sort(byZ);
+      const byPage = new Map<string, BoardElement[]>();
+      for (const el of list) {
+        const onPage = byPage.get(el.page);
+        if (onPage) onPage.push(el);
+        else byPage.set(el.page, [el]);
+      }
+      this.snapshotCache = { list, byId, byPage };
     }
     return this.snapshotCache;
   }
 
+  // ---------- Элементы ----------
+
+  /** Все элементы доски, со всех страниц. */
   list(): readonly BoardElement[] {
     return this.snapshot().list;
   }
@@ -76,8 +138,29 @@ export class BoardDocument {
     return this.snapshot().list.length;
   }
 
+  /** Элементы страницы. Объект один на страницу, а данные он всегда берёт из свежего снимка. */
+  page(pageId: string): ElementSource {
+    let view = this.pageViews.get(pageId);
+    if (!view) {
+      view = {
+        list: () => this.snapshot().byPage.get(pageId) ?? NO_ELEMENTS,
+        get: (id) => {
+          const el = this.get(id);
+          return el?.page === pageId ? el : undefined;
+        },
+      };
+      this.pageViews.set(pageId, view);
+    }
+    return view;
+  }
+
   nextZ(): number {
     return (this.list().at(-1)?.z ?? 0) + 1;
+  }
+
+  /** z ниже всех элементов: так рамки и дорожки встают под фигуры, которые в них лежат. */
+  bottomZ(): number {
+    return (this.list()[0]?.z ?? 1) - 1;
   }
 
   /** Выполняет несколько правок как одно изменение (одна рассылка, один шаг отмены). */
@@ -87,9 +170,7 @@ export class BoardDocument {
 
   add(element: BoardElement): void {
     this.transact(() => {
-      const map = new Y.Map<unknown>();
-      for (const [key, value] of Object.entries(element)) map.set(key, value);
-      this.elements.set(element.id, map);
+      this.elements.set(element.id, fieldMap(element));
       this.snapshotCache = null;
     });
   }
@@ -99,7 +180,7 @@ export class BoardDocument {
     if (!map) return;
     this.transact(() => {
       for (const [key, value] of Object.entries(patch)) {
-        if (key === 'id' || key === 'kind') continue;
+        if (key === 'id' || key === 'kind' || key === 'page') continue;
         map.set(key, value);
       }
       this.snapshotCache = null;
@@ -125,6 +206,133 @@ export class BoardDocument {
     });
   }
 
+  // ---------- Страницы ----------
+
+  /** Страницы по порядку. У доски всегда есть хотя бы одна страница. */
+  pages(): readonly Page[] {
+    if (!this.pagesCache) {
+      const pages: Page[] = [];
+      this.pageMaps.forEach((map, id) => {
+        const page = parsePage(id, map.toJSON());
+        if (page) pages.push(Object.freeze(page));
+      });
+      this.pagesCache = pages.length > 0 ? Object.freeze(pages.sort(byOrder)) : IMPLICIT_PAGES;
+    }
+    return this.pagesCache;
+  }
+
+  hasPage(id: string): boolean {
+    return this.pages().some((page) => page.id === id);
+  }
+
+  /**
+   * Записывает в документ страницы, которые пока только подразумеваются (см. IMPLICIT_PAGES).
+   * Если двое делают это одновременно, остаётся одна из одинаковых записей.
+   */
+  private materializePages(): void {
+    for (const page of this.pages()) {
+      if (this.pageMaps.has(page.id)) continue;
+      this.pageMaps.set(page.id, fieldMap({ name: page.name, order: page.order }));
+    }
+  }
+
+  /** Добавляет страницу в конец и возвращает её id. */
+  addPage(name: string): string {
+    const id = newId();
+    const last = this.pages().at(-1);
+    this.transact(() => {
+      this.materializePages();
+      this.pageMaps.set(id, fieldMap({ name, order: (last?.order ?? 0) + 1 }));
+    });
+    return id;
+  }
+
+  renamePage(id: string, name: string): void {
+    if (!this.hasPage(id)) return;
+    this.transact(() => {
+      this.materializePages();
+      this.pageMaps.get(id)?.set('name', name);
+    });
+  }
+
+  /** Ставит страницу перед страницей before, а с before = null — в конец. */
+  movePage(id: string, before: string | null): void {
+    if (id === before || !this.hasPage(id)) return;
+    const others = this.pages().filter((page) => page.id !== id);
+    const index = before === null ? others.length : others.findIndex((p) => p.id === before);
+    if (index < 0) return;
+    this.transact(() => {
+      this.materializePages();
+      this.placePage(id, others, index);
+    });
+  }
+
+  /**
+   * Записывает странице такой порядок, чтобы она встала на место index среди others.
+   * Порядок дробится при каждой вставке между двумя страницами: когда места между ними
+   * не осталось, все страницы нумеруются заново.
+   */
+  private placePage(id: string, others: readonly Page[], index: number): void {
+    const previous = others[index - 1]?.order;
+    const next = others[index]?.order;
+    let order: number;
+    if (previous === undefined) order = (next ?? 1) - 1;
+    else if (next === undefined) order = previous + 1;
+    else if (next - previous >= MIN_ORDER_GAP) order = (previous + next) / 2;
+    else {
+      const ordered = others.map((page) => page.id);
+      ordered.splice(index, 0, id);
+      ordered.forEach((pageId, position) => this.pageMaps.get(pageId)?.set('order', position));
+      return;
+    }
+    this.pageMaps.get(id)?.set('order', order);
+  }
+
+  /**
+   * Удаляет страницу вместе с её элементами. Последнюю страницу удалить нельзя.
+   * Если кто-то одновременно добавил на эту страницу фигуру, она останется в документе,
+   * но не будет видна: удаление страницы важнее. Отмена удаления вернёт и её.
+   */
+  removePage(id: string): boolean {
+    if (this.pages().length <= 1 || !this.hasPage(id)) return false;
+    const elements: string[] = [];
+    this.elements.forEach((map, key) => {
+      if (rawPage(map) === id) elements.push(key);
+    });
+    this.transact(() => {
+      this.materializePages();
+      this.pageMaps.delete(id);
+      for (const key of elements) this.elements.delete(key);
+      this.snapshotCache = null;
+    });
+    return true;
+  }
+
+  /** Копия страницы сразу после неё, с копиями всех элементов. Возвращает id копии. */
+  duplicatePage(id: string, name: string): string | null {
+    const pages = this.pages();
+    const index = pages.findIndex((page) => page.id === id);
+    if (index < 0) return null;
+    const copyId = newId();
+    const source = this.page(id);
+    const copies = cloneElements(source.list(), {
+      page: copyId,
+      offset: 0,
+      firstZ: this.nextZ(),
+      lookup: (elementId) => source.get(elementId),
+    });
+    this.transact(() => {
+      this.materializePages();
+      this.pageMaps.set(copyId, fieldMap({ name, order: 0 }));
+      this.placePage(copyId, pages, index + 1);
+      for (const copy of copies) this.elements.set(copy.id, fieldMap(copy));
+      this.snapshotCache = null;
+    });
+    return copyId;
+  }
+
+  // ---------- Отмена и подписка ----------
+
   /** Закрывает текущий шаг отмены: следующая правка начнёт новый. */
   stopCapturing(): void {
     this.undoManager.stopCapturing();
@@ -138,21 +346,16 @@ export class BoardDocument {
     return this.undoManager.redo() !== null;
   }
 
+  /** Вызывает listener после любого изменения элементов или страниц. */
   onChange(listener: () => void): () => void {
     const handler = () => {
       listener();
     };
     this.elements.observeDeep(handler);
+    this.pageMaps.observeDeep(handler);
     return () => {
       this.elements.unobserveDeep(handler);
+      this.pageMaps.unobserveDeep(handler);
     };
   }
-}
-
-let counter = 0;
-
-/** Короткий уникальный id: случайная часть плюс счётчик на случай одинаковых случайных значений. */
-export function newId(): string {
-  counter += 1;
-  return `${crypto.randomUUID().slice(0, 8)}${counter.toString(36)}`;
 }

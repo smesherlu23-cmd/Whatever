@@ -1,51 +1,62 @@
 import { type Camera, initialCamera, panBy, screenToWorld, zoomAt } from '../canvas/camera';
-import { BoardDocument, newId } from '../model/document';
+import { cloneElements } from '../model/clone';
+import { BoardDocument, type ElementSource } from '../model/document';
 import {
+  bindEnd,
   contains,
   distance,
   elementBounds,
   normalizeBounds,
   resolveArrow,
 } from '../model/geometry';
+import { newId } from '../model/ids';
 import { bindTargetAt, elementAt, hasText } from '../model/queries';
+import { type ToolKind, shapeSpec } from '../model/shapes';
 import {
   type ArrowElement,
   type ArrowEnd,
-  type ArrowRoute,
+  type ArrowStyle,
   type BoardElement,
   type Bounds,
-  DEFAULT_FILL,
-  DEFAULT_STICKY_FILL,
+  DEFAULT_ARROW_STYLE,
+  DEFAULT_PAGE,
   DEFAULT_STROKE,
+  type FileRef,
   type Point,
   type ShapeElement,
-  type ShapeKind,
   isArrow,
 } from '../model/types';
 import { recognize } from '../recognition/recognize';
 import { type KeyInput, handleShortcut } from './shortcuts';
 import { commitStroke } from './smartDrawing';
 
-/** Фигуры, которые рисуются протягиванием рамки. */
-export type ShapeTool = Exclude<ShapeKind, 'path'>;
+/** Фигуры, которые рисуются протягиванием рамки: все из каталога, кроме файлов. */
+export type ShapeTool = ToolKind;
 export type Tool = 'select' | 'pen' | 'arrow' | ShapeTool;
 
-const SHAPE_TOOLS: ReadonlySet<Tool> = new Set<ShapeTool>([
-  'rectangle',
-  'rounded',
-  'ellipse',
-  'diamond',
-  'triangle',
-  'sticky',
-  'text',
-]);
-
 function isShapeTool(tool: Tool): tool is ShapeTool {
-  return SHAPE_TOOLS.has(tool);
+  return tool !== 'select' && tool !== 'pen' && tool !== 'arrow';
 }
 
-/** Вид линий выделенных стрелок: один на всех, «разный» или null, если стрелок не выделено. */
-export type SelectionRoute = ArrowRoute | 'mixed' | null;
+/** Размер холста в экранных пикселях. */
+export interface ViewportSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Заготовка для инструмента фигуры: например, интерфейс — это класс с заранее
+ * написанным стереотипом. Размер заготовки заменяет размер из каталога.
+ */
+export interface ShapePreset {
+  text?: string;
+  size?: { w: number; h: number };
+}
+
+/** Вид выделенных стрелок. Поле равно null, если у выделенных стрелок оно разное. */
+export type MixedArrowStyle = { readonly [K in keyof ArrowStyle]: ArrowStyle[K] | null };
+
+const ARROW_STYLE_KEYS = ['route', 'startHead', 'endHead', 'dashed'] as const;
 
 export type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -55,20 +66,6 @@ const HIT_TOLERANCE_PX = 6;
 const HANDLE_SIZE_PX = 10;
 const BIND_DISTANCE_PX = 12;
 const MIN_SIZE = 8;
-const DEFAULT_SIZE: Record<ShapeKind, { w: number; h: number }> = {
-  rectangle: { w: 160, h: 80 },
-  rounded: { w: 160, h: 80 },
-  ellipse: { w: 120, h: 120 },
-  diamond: { w: 140, h: 100 },
-  triangle: { w: 140, h: 120 },
-  sticky: { w: 160, h: 160 },
-  text: { w: 160, h: 40 },
-  path: { w: 0, h: 0 },
-};
-const DEFAULT_FILLS: Partial<Record<ShapeKind, string>> = {
-  text: 'transparent',
-  sticky: DEFAULT_STICKY_FILL,
-};
 const DUPLICATE_OFFSET = 24;
 
 export interface PointerInput {
@@ -79,7 +76,8 @@ export interface PointerInput {
 type Interaction =
   | { type: 'none' }
   | { type: 'pan'; last: Point }
-  | { type: 'move'; last: Point }
+  /** carried — то, что лежит в перетаскиваемых контейнерах и едет вместе с ними. */
+  | { type: 'move'; last: Point; carried: ReadonlySet<string> }
   | { type: 'resize'; id: string; handle: Handle; start: Bounds; origin: Point }
   | { type: 'create'; id: string; origin: Point }
   | { type: 'arrowEnd'; id: string; which: 'start' | 'end'; created: boolean }
@@ -88,11 +86,14 @@ type Interaction =
 
 export interface EditorState {
   readOnly: boolean;
+  /** Открытая страница доски. */
+  pageId: string;
   tool: Tool;
   smartDrawing: boolean;
-  /** Вид линии для новых стрелок. */
-  arrowRoute: ArrowRoute;
-  selectionRoute: SelectionRoute;
+  /** Вид новых стрелок. */
+  arrowStyle: ArrowStyle;
+  /** Вид выделенных стрелок или null, если стрелок не выделено. */
+  selectionArrowStyle: MixedArrowStyle | null;
   selection: ReadonlySet<string>;
   editingId: string | null;
   camera: Camera;
@@ -104,7 +105,11 @@ export interface EditorState {
  */
 export class Editor {
   readonly doc: BoardDocument;
+  /** Страница, которую видно и правят. Остальные страницы редактор не трогает. */
+  pageId: string;
   camera: Camera = initialCamera;
+  /** Размер холста. Его сообщает холст, пока он не показан — нули. */
+  viewport: ViewportSize = { width: 0, height: 0 };
   tool: Tool = 'select';
   selection = new Set<string>();
   editingId: string | null = null;
@@ -113,7 +118,8 @@ export class Editor {
   spaceHeld = false;
   /** Умное рисование: каждый штрих превращается в ровную фигуру, если он на неё похож. */
   smartDrawing = true;
-  arrowRoute: ArrowRoute = 'straight';
+  arrowStyle: ArrowStyle = DEFAULT_ARROW_STYLE;
+  private selectionStyleCache: MixedArrowStyle | null = null;
   /**
    * Только просмотр: можно выделять, смотреть и двигать камеру, но не менять документ.
    * Это удобство для зрителя, а не защита: правки зрителя отбрасывает сервер.
@@ -123,22 +129,38 @@ export class Editor {
   stroke: Point[] | null = null;
 
   private interaction: Interaction = { type: 'none' };
+  /** Заготовка для следующей фигуры. Сбрасывается, когда фигура поставлена. */
+  private preset: ShapePreset | null = null;
   private readonly listeners = new Set<() => void>();
+  /** Камеры страниц, на которых уже побывали: при возврате страница видна как прежде. */
+  private readonly cameras = new Map<string, Camera>();
 
   constructor(doc: BoardDocument = new BoardDocument()) {
     this.doc = doc;
+    this.pageId = doc.pages()[0]?.id ?? DEFAULT_PAGE;
     doc.onChange(() => {
-      // Убираем из выделения то, что удалили (в том числе другие участники).
-      if ([...this.selection].some((id) => !doc.has(id))) {
-        this.selection = new Set([...this.selection].filter((id) => doc.has(id)));
+      // Открытую страницу удалили (в том числе другие участники): переходим на первую.
+      if (!doc.hasPage(this.pageId)) {
+        this.cameras.delete(this.pageId);
+        this.setPage(doc.pages()[0]?.id ?? DEFAULT_PAGE);
+      }
+      // Убираем из выделения то, что удалили.
+      const { page } = this;
+      if ([...this.selection].some((id) => !page.get(id))) {
+        this.selection = new Set([...this.selection].filter((id) => page.get(id)));
       }
       // Фигуру удалил другой участник, пока здесь шёл ввод: сохранять текст некуда.
-      if (this.editingId && !doc.has(this.editingId)) {
+      if (this.editingId && !page.get(this.editingId)) {
         this.editingId = null;
         this.draftText = '';
       }
       this.emit();
     });
+  }
+
+  /** Элементы открытой страницы. */
+  get page(): ElementSource {
+    return this.doc.page(this.pageId);
   }
 
   subscribe(listener: () => void): () => void {
@@ -151,10 +173,11 @@ export class Editor {
   getState(): EditorState {
     return {
       readOnly: this.readOnly,
+      pageId: this.pageId,
       tool: this.tool,
       smartDrawing: this.smartDrawing,
-      arrowRoute: this.arrowRoute,
-      selectionRoute: this.selectionRoute(),
+      arrowStyle: this.arrowStyle,
+      selectionArrowStyle: this.selectionArrowStyle(),
       selection: this.selection,
       editingId: this.editingId,
       camera: this.camera,
@@ -165,15 +188,15 @@ export class Editor {
     for (const listener of this.listeners) listener();
   }
 
-  private readonly lookup = (id: string) => this.doc.get(id);
+  private readonly lookup = (id: string) => this.page.get(id);
 
   private arrow(id: string): ArrowElement | undefined {
-    const el = this.doc.get(id);
+    const el = this.lookup(id);
     return el && isArrow(el) ? el : undefined;
   }
 
   private shape(id: string): ShapeElement | undefined {
-    const el = this.doc.get(id);
+    const el = this.lookup(id);
     return el && !isArrow(el) ? el : undefined;
   }
 
@@ -194,6 +217,23 @@ export class Editor {
     this.emit();
   }
 
+  /**
+   * Открывает другую страницу. Набранный текст сохраняется, начатое действие отменяется,
+   * выделение снимается. Камера у каждой страницы своя.
+   */
+  setPage(id: string): void {
+    if (id === this.pageId || !this.doc.hasPage(id)) return;
+    this.stopEditing();
+    this.interaction = { type: 'none' };
+    this.stroke = null;
+    this.marquee = null;
+    this.selection = new Set();
+    this.cameras.set(this.pageId, this.camera);
+    this.pageId = id;
+    this.camera = this.cameras.get(id) ?? initialCamera;
+    this.emit();
+  }
+
   setSmartDrawing(enabled: boolean): void {
     this.smartDrawing = enabled;
     this.emit();
@@ -203,31 +243,45 @@ export class Editor {
     return [...this.selection].map((id) => this.arrow(id)).filter((el) => el !== undefined);
   }
 
-  selectionRoute(): SelectionRoute {
-    const routes = new Set(this.selectedArrows().map((arrow) => arrow.route));
-    if (routes.size === 0) return null;
-    const [only] = routes;
-    return routes.size === 1 && only ? only : 'mixed';
+  selectionArrowStyle(): MixedArrowStyle | null {
+    const [first, ...rest] = this.selectedArrows();
+    if (!first) return null;
+    const common = <K extends keyof ArrowStyle>(key: K): ArrowStyle[K] | null =>
+      rest.every((arrow) => arrow[key] === first[key]) ? first[key] : null;
+    const style: MixedArrowStyle = {
+      route: common('route'),
+      startHead: common('startHead'),
+      endHead: common('endHead'),
+      dashed: common('dashed'),
+    };
+    // Пока вид не изменился, отдаётся тот же объект: панель не перерисовывается
+    // на каждое движение мыши.
+    const cached = this.selectionStyleCache;
+    if (cached && ARROW_STYLE_KEYS.every((key) => cached[key] === style[key])) return cached;
+    this.selectionStyleCache = style;
+    return style;
   }
 
-  /** Вид линии для новых стрелок и для выделенных: меняются одним шагом отмены. */
-  setArrowRoute(route: ArrowRoute): void {
+  /** Меняет вид новых стрелок и выделенных. Выделенные меняются одним шагом отмены. */
+  setArrowStyle(patch: Partial<ArrowStyle>): void {
     if (this.readOnly) return;
-    this.arrowRoute = route;
-    const arrows = this.selectedArrows().filter((arrow) => arrow.route !== route);
+    this.arrowStyle = { ...this.arrowStyle, ...patch };
+    const arrows = this.selectedArrows();
     if (arrows.length > 0) {
       this.doc.stopCapturing();
       this.doc.transact(() => {
-        for (const arrow of arrows) this.doc.update(arrow.id, { route });
+        for (const arrow of arrows) this.doc.update(arrow.id, patch);
       });
       this.doc.stopCapturing();
     }
     this.emit();
   }
 
-  setTool(tool: Tool): void {
+  /** Выбирает инструмент. preset задаёт текст и размер новой фигуры, например для интерфейса. */
+  setTool(tool: Tool, preset: ShapePreset | null = null): void {
     if (this.readOnly && tool !== 'select') return;
     this.tool = tool;
+    this.preset = isShapeTool(tool) ? preset : null;
     if (tool !== 'select') this.selection = new Set();
     this.emit();
   }
@@ -240,6 +294,16 @@ export class Editor {
   setCamera(camera: Camera): void {
     this.camera = camera;
     this.emit();
+  }
+
+  setViewport(size: ViewportSize): void {
+    this.viewport = size;
+    this.emit();
+  }
+
+  /** Середина видимой части холста в мировых координатах. */
+  viewportCenter(): Point {
+    return this.toWorld({ x: this.viewport.width / 2, y: this.viewport.height / 2 });
   }
 
   wheel(screen: Point, deltaX: number, deltaY: number, zoom: boolean): void {
@@ -261,11 +325,11 @@ export class Editor {
   // ---------- Поиск под курсором ----------
 
   elementAt(world: Point): BoardElement | undefined {
-    return elementAt(this.doc, world, this.px(HIT_TOLERANCE_PX));
+    return elementAt(this.page, world, this.px(HIT_TOLERANCE_PX));
   }
 
   private bindTargetAt(world: Point, exclude?: string): ShapeElement | undefined {
-    return bindTargetAt(this.doc, world, this.px(BIND_DISTANCE_PX), exclude);
+    return bindTargetAt(this.page, world, this.px(BIND_DISTANCE_PX), exclude);
   }
 
   /** Ручки изменения размера для одной выделенной фигуры. */
@@ -308,7 +372,7 @@ export class Editor {
   singleSelected(): BoardElement | undefined {
     if (this.selection.size !== 1) return undefined;
     const [id] = this.selection;
-    return id === undefined ? undefined : this.doc.get(id);
+    return id === undefined ? undefined : this.lookup(id);
   }
 
   /** Единственная выделенная стрелка, концы которой можно перетаскивать. */
@@ -338,19 +402,22 @@ export class Editor {
     else if (isShapeTool(tool)) this.beginCreate(tool, world);
   }
 
-  private beginCreate(kind: ShapeKind, world: Point): void {
+  private beginCreate(kind: ShapeTool, world: Point): void {
     const id = newId();
+    const spec = shapeSpec(kind);
     this.doc.add({
       id,
       kind,
+      page: this.pageId,
       x: world.x,
       y: world.y,
       w: 0,
       h: 0,
-      text: '',
+      text: this.preset?.text ?? '',
       stroke: DEFAULT_STROKE,
-      fill: DEFAULT_FILLS[kind] ?? DEFAULT_FILL,
-      z: this.doc.nextZ(),
+      fill: spec.fill,
+      // Контейнер встаёт под всё, что уже нарисовано: фигуры остаются на виду и в нём.
+      z: spec.container ? this.doc.bottomZ() : this.doc.nextZ(),
     });
     this.selection = new Set([id]);
     this.interaction = { type: 'create', id, origin: world };
@@ -360,13 +427,15 @@ export class Editor {
   private beginArrow(world: Point): void {
     const id = newId();
     const target = this.bindTargetAt(world);
-    const start: ArrowEnd = target ? { x: world.x, y: world.y, shapeId: target.id } : world;
+    const start: ArrowEnd = target ? bindEnd(target, world) : world;
     this.doc.add({
       id,
       kind: 'arrow',
+      page: this.pageId,
       start,
       end: { x: world.x, y: world.y },
-      route: this.arrowRoute,
+      text: '',
+      ...this.arrowStyle,
       stroke: DEFAULT_STROKE,
       z: this.doc.nextZ(),
     });
@@ -403,7 +472,9 @@ export class Editor {
       } else if (!this.selection.has(hit.id)) {
         this.selection = new Set([hit.id]);
       }
-      this.interaction = this.readOnly ? { type: 'none' } : { type: 'move', last: world };
+      this.interaction = this.readOnly
+        ? { type: 'none' }
+        : { type: 'move', last: world, carried: this.carriedBySelection() };
       this.emit();
       return;
     }
@@ -424,7 +495,7 @@ export class Editor {
         this.emit();
         return;
       case 'move':
-        this.moveSelection(world.x - it.last.x, world.y - it.last.y);
+        this.moveSelection(world.x - it.last.x, world.y - it.last.y, it.carried);
         it.last = world;
         return;
       case 'resize':
@@ -441,9 +512,7 @@ export class Editor {
         const other = arrow[it.which === 'start' ? 'end' : 'start'];
         const target = this.bindTargetAt(world, other.shapeId);
         this.doc.update(it.id, {
-          [it.which]: target
-            ? { x: world.x, y: world.y, shapeId: target.id }
-            : { x: world.x, y: world.y },
+          [it.which]: target ? bindEnd(target, world) : { x: world.x, y: world.y },
         });
         return;
       }
@@ -455,7 +524,7 @@ export class Editor {
         it.current = world;
         const marquee = normalizeBounds(it.origin, world);
         this.marquee = marquee;
-        const inside = this.doc
+        const inside = this.page
           .list()
           .filter((el) => contains(marquee, elementBounds(el, this.lookup)))
           .map((el) => el.id);
@@ -491,20 +560,21 @@ export class Editor {
     this.stroke = null;
     if (!stroke || stroke.length < 2) return;
     const result = this.smartDrawing ? recognize(stroke) : null;
-    commitStroke(this.doc, stroke, result, this.camera.zoom);
+    commitStroke(this.doc, this.pageId, stroke, result, this.camera.zoom);
   }
 
   private finishCreate(id: string, origin: Point): void {
     const el = this.shape(id);
-    if (!el) return;
+    if (!el || el.kind === 'path') return;
     if (el.w < MIN_SIZE && el.h < MIN_SIZE) {
       // Щелчок без перетаскивания: фигура стандартного размера с центром в точке щелчка.
-      const size = DEFAULT_SIZE[el.kind];
+      const size = this.preset?.size ?? shapeSpec(el.kind).size;
       this.doc.update(id, { x: origin.x - size.w / 2, y: origin.y - size.h / 2, ...size });
     } else {
       this.doc.update(id, { w: Math.max(el.w, MIN_SIZE), h: Math.max(el.h, MIN_SIZE) });
     }
     this.tool = 'select';
+    this.preset = null;
     if (el.kind === 'text') this.startEditing(id);
   }
 
@@ -521,11 +591,29 @@ export class Editor {
     this.tool = 'select';
   }
 
-  private moveSelection(dx: number, dy: number): void {
+  /**
+   * Элементы, которые целиком лежат в выделенных контейнерах, но сами не выделены.
+   * Считаются в начале перетаскивания: то, что окажется в рамке по пути, не подхватывается.
+   */
+  private carriedBySelection(): Set<string> {
+    const containers = [...this.selection]
+      .map((id) => this.shape(id))
+      .filter((el) => el !== undefined && el.kind !== 'path' && shapeSpec(el.kind).container);
+    const carried = new Set<string>();
+    if (containers.length === 0) return carried;
+    for (const el of this.page.list()) {
+      if (this.selection.has(el.id)) continue;
+      const bounds = elementBounds(el, this.lookup);
+      if (containers.some((c) => c !== undefined && contains(c, bounds))) carried.add(el.id);
+    }
+    return carried;
+  }
+
+  private moveSelection(dx: number, dy: number, carried: ReadonlySet<string>): void {
     if (dx === 0 && dy === 0) return;
     this.doc.transact(() => {
-      for (const id of this.selection) {
-        const el = this.doc.get(id);
+      for (const id of [...this.selection, ...carried]) {
+        const el = this.lookup(id);
         if (!el) continue;
         if (isArrow(el)) {
           // Привязанные концы следуют за фигурой, свободные двигаются вместе со стрелкой.
@@ -539,11 +627,16 @@ export class Editor {
     });
   }
 
+  /**
+   * Тянет ручку размера. Картинка сохраняет пропорции, а с Shift тянется свободно;
+   * остальные фигуры наоборот.
+   */
   private resize(
     it: { id: string; handle: Handle; start: Bounds; origin: Point },
     world: Point,
-    keepRatio: boolean,
+    shift: boolean,
   ): void {
+    const keepRatio = shift !== (this.shape(it.id)?.kind === 'image');
     const dx = world.x - it.origin.x;
     const dy = world.y - it.origin.y;
     let { x, y, w, h } = it.start;
@@ -576,6 +669,12 @@ export class Editor {
     this.doc.update(it.id, { x, y, w: Math.max(w, MIN_SIZE), h: Math.max(h, MIN_SIZE) });
   }
 
+  /** Файл картинки или вложения под указателем: его открывают двойным щелчком. */
+  attachmentAt(screen: Point): FileRef | undefined {
+    const hit = this.elementAt(this.toWorld(screen));
+    return hit && !isArrow(hit) ? hit.file : undefined;
+  }
+
   doubleClick(screen: Point): void {
     if (this.readOnly) return;
     const hit = this.elementAt(this.toWorld(screen));
@@ -599,7 +698,7 @@ export class Editor {
   startEditing(id: string): void {
     if (this.readOnly || this.editingId === id) return;
     if (this.editingId) this.stopEditing();
-    const el = this.doc.get(id);
+    const el = this.lookup(id);
     if (!el || !hasText(el)) return;
     this.editingId = id;
     this.draftText = el.text;
@@ -626,7 +725,7 @@ export class Editor {
   }
 
   private saveText(id: string, text: string): void {
-    const el = this.doc.get(id);
+    const el = this.lookup(id);
     if (!el || !hasText(el)) return;
     this.doc.stopCapturing();
     if (el.kind === 'text' && text.trim() === '') {
@@ -650,32 +749,34 @@ export class Editor {
 
   duplicateSelection(): void {
     if (this.readOnly) return;
-    const originals = [...this.selection]
-      .map((id) => this.doc.get(id))
-      .filter((el) => el !== undefined);
+    const originals = [...this.selection].map(this.lookup).filter((el) => el !== undefined);
     if (originals.length === 0) return;
-    // Новые id выдаются заранее, чтобы копии стрелок цеплялись за копии фигур.
-    const pairs = originals.map((original) => ({ original, id: newId() }));
-    const copyIds = new Map(pairs.map(({ original, id }) => [original.id, id]));
-    const copyEnd = (end: ArrowEnd): ArrowEnd => {
-      const copiedShape = end.shapeId ? copyIds.get(end.shapeId) : undefined;
-      return copiedShape
-        ? { ...end, shapeId: copiedShape }
-        : { x: end.x + DUPLICATE_OFFSET, y: end.y + DUPLICATE_OFFSET };
-    };
-    let z = this.doc.nextZ();
-    const copies: BoardElement[] = pairs.map(({ original: el, id }) =>
-      isArrow(el)
-        ? { ...el, id, start: copyEnd(el.start), end: copyEnd(el.end), z: z++ }
-        : { ...el, id, x: el.x + DUPLICATE_OFFSET, y: el.y + DUPLICATE_OFFSET, z: z++ },
-    );
-
+    const copies = cloneElements(originals, {
+      page: this.pageId,
+      offset: DUPLICATE_OFFSET,
+      firstZ: this.doc.nextZ(),
+      lookup: this.lookup,
+    });
     this.doc.stopCapturing();
     this.doc.transact(() => {
       for (const copy of copies) this.doc.add(copy);
     });
     this.doc.stopCapturing();
     this.selection = new Set(copies.map((el) => el.id));
+    this.emit();
+  }
+
+  /** Добавляет готовые элементы на открытую страницу одним шагом отмены и выделяет их. */
+  insert(elements: readonly BoardElement[]): void {
+    if (this.readOnly || elements.length === 0) return;
+    this.doc.stopCapturing();
+    this.doc.transact(() => {
+      for (const el of elements) this.doc.add(el);
+    });
+    this.doc.stopCapturing();
+    this.tool = 'select';
+    // Элементы могли встать на другую страницу: например, их вставили, пока открыта была она.
+    this.selection = new Set(elements.filter((el) => el.page === this.pageId).map((el) => el.id));
     this.emit();
   }
 

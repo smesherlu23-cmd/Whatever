@@ -1,9 +1,10 @@
-import type { SelectionRoute, Tool } from '../editor/Editor';
-import type { ArrowRoute } from '../model/types';
+import type { MixedArrowStyle, Tool } from '../editor/Editor';
+import type { ArrowStyle } from '../model/types';
+import { ArrowStyleControls } from './ArrowStyleControls';
 import { type IconName, ToolIcon } from './ToolIcon';
 import styles from './Toolbar.module.css';
 
-const TOOLS: readonly { id: Tool; label: string; key: string }[] = [
+const TOOLS: readonly { id: Tool & IconName; label: string; key: string }[] = [
   { id: 'select', label: 'Выделение', key: 'V' },
   { id: 'pen', label: 'Рисование', key: 'P' },
   { id: 'rectangle', label: 'Прямоугольник', key: 'R' },
@@ -14,11 +15,6 @@ const TOOLS: readonly { id: Tool; label: string; key: string }[] = [
   { id: 'sticky', label: 'Стикер', key: 'S' },
   { id: 'arrow', label: 'Стрелка', key: 'A' },
   { id: 'text', label: 'Текст', key: 'T' },
-];
-
-const ROUTES: readonly { id: ArrowRoute; label: string }[] = [
-  { id: 'straight', label: 'Прямая' },
-  { id: 'elbow', label: 'Ломаная' },
 ];
 
 function IconButton({
@@ -53,9 +49,12 @@ export function Toolbar({
   onChange,
   smartDrawing,
   onSmartDrawingChange,
-  arrowRoute,
-  selectionRoute,
-  onArrowRouteChange,
+  arrowStyle,
+  selectionArrowStyle,
+  onArrowStyleChange,
+  shapesOpen,
+  onShapesToggle,
+  onInsertFile,
   onUndo,
   onRedo,
 }: {
@@ -63,15 +62,19 @@ export function Toolbar({
   onChange: (tool: Tool) => void;
   smartDrawing: boolean;
   onSmartDrawingChange: (enabled: boolean) => void;
-  /** Вид линии для новых стрелок. */
-  arrowRoute: ArrowRoute;
-  /** Вид линии выделенных стрелок; если они выделены, переключатель меняет их. */
-  selectionRoute: SelectionRoute;
-  onArrowRouteChange: (route: ArrowRoute) => void;
+  /** Вид новых стрелок. */
+  arrowStyle: ArrowStyle;
+  /** Вид выделенных стрелок; если они выделены, переключатели меняют их. */
+  selectionArrowStyle: MixedArrowStyle | null;
+  onArrowStyleChange: (patch: Partial<ArrowStyle>) => void;
+  /** Открыта ли панель «Фигуры». */
+  shapesOpen: boolean;
+  onShapesToggle: () => void;
+  /** Выбор картинки или файла с диска. */
+  onInsertFile: () => void;
   onUndo: () => void;
   onRedo: () => void;
 }) {
-  const shownRoute = selectionRoute ?? arrowRoute;
   return (
     <div className={styles.toolbar} role="toolbar" aria-label="Инструменты">
       {TOOLS.map((t) => (
@@ -84,6 +87,25 @@ export function Toolbar({
           onClick={() => onChange(t.id)}
         />
       ))}
+      <button
+        type="button"
+        className={styles.button}
+        aria-label="Фигуры"
+        title="Фигуры: блок-схемы, инфраструктура, UML, ER, BPMN, контейнеры"
+        aria-pressed={shapesOpen}
+        onClick={onShapesToggle}
+      >
+        <ToolIcon name="shapes" />
+      </button>
+      <button
+        type="button"
+        className={styles.button}
+        aria-label="Картинка или файл"
+        title="Картинка или файл с диска. Их можно и перетащить на доску или вставить: Ctrl+V"
+        onClick={onInsertFile}
+      >
+        <ToolIcon name="image" />
+      </button>
       {tool === 'pen' && (
         <label
           className={styles.switch}
@@ -98,20 +120,12 @@ export function Toolbar({
           Умное рисование
         </label>
       )}
-      {(tool === 'arrow' || selectionRoute !== null) && (
-        <div className={styles.segmented} role="group" aria-label="Линия стрелки">
-          {ROUTES.map((route) => (
-            <button
-              key={route.id}
-              type="button"
-              className={styles.segment}
-              aria-pressed={shownRoute === route.id}
-              onClick={() => onArrowRouteChange(route.id)}
-            >
-              {route.label}
-            </button>
-          ))}
-        </div>
+      {(tool === 'arrow' || selectionArrowStyle !== null) && (
+        <ArrowStyleControls
+          style={arrowStyle}
+          selection={selectionArrowStyle}
+          onChange={onArrowStyleChange}
+        />
       )}
       <span className={styles.divider} />
       <IconButton icon="undo" label="Отменить" shortcut="Ctrl+Z" onClick={onUndo} />

@@ -1,29 +1,51 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useEffectEvent, useRef } from 'react';
 import type { Presence } from '../collab/presence';
 import type { Editor, Tool } from '../editor/Editor';
+import type { FileRef, Point } from '../model/types';
+import { subscribeTheme } from '../ui/theme';
 import { screenToWorld } from './camera';
 import styles from './Board.module.css';
-import { subscribeTheme } from '../ui/theme';
-import { readTheme, renderBoard } from './render';
+import type { ImageCache } from './images';
+import { renderBoard } from './render';
+import { readTheme } from './scene';
 
-const CURSORS: Record<Tool, string> = {
-  select: 'default',
-  pen: 'crosshair',
-  rectangle: 'crosshair',
-  rounded: 'crosshair',
-  ellipse: 'crosshair',
-  diamond: 'crosshair',
-  triangle: 'crosshair',
-  sticky: 'crosshair',
-  arrow: 'crosshair',
-  text: 'text',
-};
+/** Курсор над холстом: стрелка для выделения, I-образный для текста, перекрестие для рисования. */
+function cursorFor(tool: Tool): string {
+  if (tool === 'select') return 'default';
+  return tool === 'text' ? 'text' : 'crosshair';
+}
 
 const TYPING_TARGETS = 'input, textarea, select, [contenteditable="true"]';
 
+const hasFiles = (data: DataTransfer | null): data is DataTransfer =>
+  data !== null && Array.from(data.types).includes('Files');
+
+export interface BoardProps {
+  editor: Editor;
+  presence?: Presence;
+  /** Картинки файлов доски. Без них на месте картинок рисуются заглушки. */
+  images?: ImageCache;
+  /** Двойной щелчок по картинке или вложению. */
+  onOpenFile?: (file: FileRef) => void;
+  /**
+   * Файлы, брошенные на холст или вставленные из буфера обмена, и точка вставки в мировых
+   * координатах. Без обработчика холст файлы не принимает.
+   */
+  onInsertFiles?: (files: File[], at: Point) => void;
+}
+
 /** Холст доски. Передаёт события в редактор и перерисовывает кадр, только когда что-то изменилось. */
-export function Board({ editor, presence }: { editor: Editor; presence?: Presence }) {
+export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: BoardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const acceptsFiles = onInsertFiles !== undefined;
+  const insertFiles = useEffectEvent((files: File[], at: Point) => {
+    onInsertFiles?.(files, at);
+  });
+  const openFile = useEffectEvent((file: FileRef): boolean => {
+    if (!onOpenFile) return false;
+    onOpenFile(file);
+    return true;
+  });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -40,29 +62,30 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
       const dpr = window.devicePixelRatio || 1;
       canvas.width = canvas.clientWidth * dpr;
       canvas.height = canvas.clientHeight * dpr;
-      requestDraw();
+      editor.setViewport({ width: canvas.clientWidth, height: canvas.clientHeight });
     };
 
     const render = () => {
       frame = requestAnimationFrame(render);
       if (!dirty) return;
       dirty = false;
-      canvas.style.cursor = editor.spaceHeld ? 'grab' : CURSORS[editor.tool];
-      renderBoard(
-        ctx,
-        editor,
-        canvas.clientWidth,
-        canvas.clientHeight,
-        window.devicePixelRatio || 1,
-        readTheme(canvas),
-        presence?.peers() ?? [],
-      );
+      canvas.style.cursor = editor.spaceHeld ? 'grab' : cursorFor(editor.tool);
+      renderBoard(ctx, editor, {
+        width: canvas.clientWidth,
+        height: canvas.clientHeight,
+        dpr: window.devicePixelRatio || 1,
+        theme: readTheme(canvas),
+        peers: presence?.peers() ?? [],
+        images: images?.get,
+      });
     };
 
-    const local = (e: { clientX: number; clientY: number }) => {
+    const local = (e: { clientX: number; clientY: number }): Point => {
       const rect = canvas.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
+    /** Где указатель над холстом; null — он за пределами холста. */
+    let pointer: Point | null = null;
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -84,13 +107,38 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
       editor.pointerUp();
     };
     const onHover = (e: PointerEvent) => {
-      presence?.setCursor(screenToWorld(editor.camera, local(e)));
+      pointer = local(e);
+      presence?.setCursor(screenToWorld(editor.camera, pointer));
     };
     const onLeave = () => {
+      pointer = null;
       presence?.setCursor(null);
     };
     const onDoubleClick = (e: MouseEvent) => {
+      const file = editor.attachmentAt(local(e));
+      if (file && openFile(file)) return;
       editor.doubleClick(local(e));
+    };
+
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e.dataTransfer)) return;
+      // Без preventDefault браузер не даст бросить файл и откроет его сам.
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) insertFiles(files, screenToWorld(editor.camera, local(e)));
+    };
+    // Снимок экрана из буфера обмена встаёт под указатель, а если он не над холстом — в середину.
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.target instanceof Element && e.target.closest(TYPING_TARGETS)) return;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      insertFiles(files, pointer ? screenToWorld(editor.camera, pointer) : editor.viewportCenter());
     };
 
     const onKey = (e: KeyboardEvent) => {
@@ -114,6 +162,7 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
 
     const unsubscribe = editor.subscribe(requestDraw);
     const unsubscribePresence = presence?.subscribe(requestDraw);
+    const unsubscribeImages = images?.subscribe(requestDraw);
     const unsubscribeTheme = subscribeTheme(requestDraw);
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
@@ -129,6 +178,11 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
     canvas.addEventListener('pointercancel', onPointerUp, { signal });
     canvas.addEventListener('pointerleave', onLeave, { signal });
     canvas.addEventListener('dblclick', onDoubleClick, { signal });
+    if (acceptsFiles) {
+      canvas.addEventListener('dragover', onDragOver, { signal });
+      canvas.addEventListener('drop', onDrop, { signal });
+      window.addEventListener('paste', onPaste, { signal });
+    }
     window.addEventListener('keydown', onKey, { signal });
     window.addEventListener('keyup', onKey, { signal });
     frame = requestAnimationFrame(render);
@@ -139,9 +193,10 @@ export function Board({ editor, presence }: { editor: Editor; presence?: Presenc
       observer.disconnect();
       unsubscribe();
       unsubscribePresence?.();
+      unsubscribeImages?.();
       unsubscribeTheme();
     };
-  }, [editor, presence]);
+  }, [editor, presence, images, acceptsFiles]);
 
   return <canvas ref={canvasRef} className={styles.canvas} aria-label="Холст доски" />;
 }

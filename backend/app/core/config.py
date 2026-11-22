@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     sync_compact_after: PositiveInt = 50
     """Сколько записей истории доски копить, прежде чем сжать их в один снимок."""
 
+    # ---------- Файлы ----------
+
+    files_dir: Path = Path("data/files")
+    """Каталог картинок и вложений досок. Относительный путь считается от рабочего каталога
+    процесса. В docker compose здесь том files-data, и путь задан в docker-compose.yml."""
+    max_upload_mb: PositiveInt = 10
+    """Наибольший размер одного файла, загружаемого на доску, в мегабайтах."""
+
     # ---------- Журнал ----------
 
     log_level: LogLevel = LogLevel.INFO
@@ -115,6 +123,10 @@ class Settings(BaseSettings):
     @property
     def login_window(self) -> timedelta:
         return timedelta(minutes=self.login_window_minutes)
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
 
 
 @lru_cache

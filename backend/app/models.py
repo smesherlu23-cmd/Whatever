@@ -137,3 +137,26 @@ class BoardUpdate(Base):
     )
     data: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BoardFile(Base):
+    """Картинка или вложение на доске. Здесь описание файла, содержимое лежит на диске (app.files).
+
+    id файла уникален в пределах доски: копия доски получает файлы под теми же id, и ссылки
+    на них в содержимом доски переписывать не нужно.
+    """
+
+    __tablename__ = "board_files"
+
+    board_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("boards.id", ondelete="CASCADE"), primary_key=True
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(BigInteger)
+    # Файл остаётся на доске и после удаления учётной записи того, кто его загрузил.
+    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

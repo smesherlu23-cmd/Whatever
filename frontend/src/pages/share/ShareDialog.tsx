@@ -11,6 +11,7 @@ import {
   shareUrl,
 } from '../../api';
 import controls from '../../ui/controls.module.css';
+import { Dialog } from '../../ui/Dialog';
 import styles from './ShareDialog.module.css';
 
 export const ROLE_TEXT: Record<BoardRole, string> = {
@@ -48,14 +49,9 @@ export function ShareDialog({
   me: string;
   onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [access, setAccess] = useState<BoardAccess | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
-
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,19 +120,7 @@ export function ShareDialog({
     });
 
   return (
-    <dialog ref={dialog} className={styles.dialog} aria-labelledby="share-title" onClose={onClose}>
-      <header className={styles.header}>
-        <h2 id="share-title">Доступ к доске «{board.name}»</h2>
-        <button
-          type="button"
-          className={controls.ghost}
-          aria-label="Закрыть"
-          onClick={() => dialog.current?.close()}
-        >
-          ✕
-        </button>
-      </header>
-
+    <Dialog title={`Доступ к доске «${board.name}»`} onClose={onClose}>
       {message && (
         <p
           className={message.ok ? controls.success : controls.error}
@@ -210,7 +194,7 @@ export function ShareDialog({
           </section>
         </>
       )}
-    </dialog>
+    </Dialog>
   );
 }
 

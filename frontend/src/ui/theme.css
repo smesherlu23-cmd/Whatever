@@ -12,6 +12,17 @@
   --gray-800: #2c2c31;
   --gray-900: #1b1b1f;
 
+  --radius: 8px;
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/*
+ * Цвета тем. Тема задаётся атрибутом data-theme: у корня — для всего приложения, у любого
+ * другого элемента — для него одного. Так экспорт узнаёт цвета светлой и тёмной темы,
+ * какая бы ни была открыта.
+ */
+:root,
+[data-theme='light'] {
   --bg-app: var(--gray-50);
   --bg-panel: var(--gray-0);
   --bg-hover: var(--gray-100);
@@ -22,6 +33,7 @@
   --text-on-active: var(--gray-0);
   --canvas-bg: var(--gray-50);
   --canvas-grid: var(--gray-300);
+  --canvas-placeholder: var(--gray-100);
   --selection: var(--gray-700);
   --selection-fill: rgb(67 67 74 / 0.08);
   /* Цвета фигур по умолчанию. В документе хранится один цвет, а на экране он свой в каждой теме. */
@@ -30,15 +42,12 @@
   --sticky-fill: #fbe9a0;
   --danger: #b42318;
   --warning: #b5562d;
-
-  --radius: 8px;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.06);
-  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   color-scheme: light;
 }
 
-:root[data-theme='dark'] {
+[data-theme='dark'] {
   --bg-app: var(--gray-900);
   --bg-panel: var(--gray-800);
   --bg-hover: var(--gray-700);
@@ -49,6 +58,7 @@
   --text-on-active: var(--gray-900);
   --canvas-bg: var(--gray-900);
   --canvas-grid: var(--gray-700);
+  --canvas-placeholder: var(--gray-800);
   --selection: var(--gray-200);
   --selection-fill: rgb(222 222 226 / 0.08);
   --shape-stroke: var(--gray-200);

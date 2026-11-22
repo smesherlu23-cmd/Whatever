@@ -46,6 +46,14 @@ export interface ShareLink {
   expires_at: string | null;
 }
 
+/** Файл, загруженный на доску. content_type определяет сервер по содержимому. */
+export interface UploadedFile {
+  id: string;
+  name: string;
+  content_type: string;
+  size: number;
+}
+
 /** Кто имеет доступ к доске. Видно только тем, кто ею управляет. */
 export interface BoardAccess {
   owner: Person | null;
@@ -115,16 +123,26 @@ export function reportSignedOut(): void {
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** Тело запроса в JSON. */
   body?: unknown;
+  /** Тело запроса как есть: содержимое файла. */
+  content?: Blob;
+  headers?: Record<string, string>;
   /** Ответ 401 здесь ожидаем (неверный пароль, вход ещё не выполнен) и не означает потерю входа. */
   signIn?: boolean;
 }
 
-async function send(path: string, { method, body, signIn = false }: RequestOptions = {}) {
+async function send(
+  path: string,
+  { method, body, content, headers, signIn = false }: RequestOptions = {},
+) {
   const init: RequestInit = { method };
+  if (headers) init.headers = headers;
   if (body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json' };
+    init.headers = { ...headers, 'Content-Type': 'application/json' };
     init.body = JSON.stringify(body);
+  } else if (content !== undefined) {
+    init.body = content;
   }
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
@@ -207,6 +225,17 @@ export const api = {
   /** Активные пользователи, с которыми можно поделиться доской. */
   listPeople: () => sendJson<Person[]>('/users'),
 
+  /**
+   * Загружает файл на доску. Имя передаётся в заголовке, закодированным как часть адреса:
+   * в заголовках допустима только латиница.
+   */
+  uploadFile: (boardId: string, content: Blob, name: string) =>
+    sendJson<UploadedFile>(`/boards/${boardId}/files`, {
+      method: 'POST',
+      content,
+      headers: { 'X-File-Name': encodeURIComponent(name) },
+    }),
+
   listUsers: () => sendJson<User[]>('/admin/users'),
   createUser: (user: NewUser) => sendJson<User>('/admin/users', { method: 'POST', body: user }),
   updateUser: (id: string, changes: UserChanges) =>
@@ -217,6 +246,11 @@ export const api = {
 export function syncUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}${SYNC_PATH}`;
+}
+
+/** Адрес файла доски: картинки открываются в браузере, остальное скачивается. */
+export function fileUrl(boardId: string, fileId: string): string {
+  return `${API_BASE}/boards/${boardId}/files/${fileId}`;
 }
 
 /** Ссылка доступа, которую можно отправить коллеге. */

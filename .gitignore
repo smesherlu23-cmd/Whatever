@@ -9,6 +9,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Картинки и вложения досок при разработке (WHATEVER_FILES_DIR)
+backend/data/
+
 # Кэши инструментов
 __pycache__/
 *.py[cod]

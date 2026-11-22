@@ -1,5 +1,6 @@
 """Доски: список, создание, переименование, перенос в папку и удаление."""
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Self
@@ -15,6 +16,7 @@ from app.api.schemas import Person
 from app.auth.dependencies import (
     CurrentUser,
     EditableBoard,
+    FileStorage,
     ManagedBoard,
     OpenRooms,
     OpenSockets,
@@ -23,6 +25,8 @@ from app.auth.dependencies import (
 )
 from app.core.db import DbSession
 from app.models import Board, User
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/boards", tags=["boards"])
 
@@ -127,10 +131,20 @@ async def update_board(target: EditableBoard, body: BoardUpdate, db: DbSession) 
 
 @router.delete("/{board_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_board(
-    target: ManagedBoard, db: DbSession, rooms: OpenRooms, sockets: OpenSockets
+    target: ManagedBoard,
+    db: DbSession,
+    rooms: OpenRooms,
+    sockets: OpenSockets,
+    files: FileStorage,
 ) -> None:
+    board_id = target.board.id
     await db.delete(target.board)
     await db.commit()
     # Открытая комната больше ничего не запишет, а участники увидят, что доски нет.
-    rooms.discard(target.board.id)
-    await sockets.close_board(target.board.id)
+    rooms.discard(board_id)
+    await sockets.close_board(board_id)
+    try:
+        await files.delete_board(board_id)
+    except OSError:
+        # Доска уже удалена; оставшиеся файлы только занимают место, их можно удалить вручную.
+        log.exception("Не удалось удалить файлы доски %s", board_id)

@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { ROLE_NAMES } from '../auth/accounts';
 import { useAuth } from '../auth/context';
 import { Link } from './Link';
+import { useDismiss } from './useDismiss';
 import styles from './UserMenu.module.css';
 
 /** Кнопка с именем пользователя и раскрывающимся списком: учётная запись, пользователи, выход. */
@@ -12,22 +13,9 @@ export function UserMenu() {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (e.target instanceof Node && root.current?.contains(e.target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+  useDismiss(root, open, () => {
+    setOpen(false);
+  });
 
   const exit = () => {
     setError(null);

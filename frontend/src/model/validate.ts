@@ -1,4 +1,16 @@
-import { type ArrowEnd, type BoardElement, type Point, SHAPE_KINDS, type ShapeKind } from './types';
+import {
+  ARROW_HEADS,
+  type ArrowEnd,
+  type ArrowHead,
+  type BoardElement,
+  DEFAULT_ARROW_STYLE,
+  DEFAULT_PAGE,
+  type FileRef,
+  type Page,
+  type Point,
+  SHAPE_KINDS,
+  type ShapeKind,
+} from './types';
 
 /*
  * Проверка данных, пришедших от других участников. Документ доски и присутствие приходят
@@ -26,17 +38,33 @@ function isShapeKind(value: unknown): value is ShapeKind {
   return SHAPE_KINDS.some((kind) => kind === value);
 }
 
+function isArrowHead(value: unknown): value is ArrowHead {
+  return ARROW_HEADS.some((head) => head === value);
+}
+
 function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every(isNumber);
 }
 
-function isArrowEnd(value: unknown): value is ArrowEnd {
-  return (
-    isRecord(value) &&
-    isNumber(value.x) &&
-    isNumber(value.y) &&
-    (value.shapeId === undefined || isString(value.shapeId))
-  );
+/** Конец стрелки только с известными полями: чужие лишние поля дальше не идут. */
+function parseArrowEnd(value: unknown): ArrowEnd | null {
+  if (!isRecord(value) || !isNumber(value.x) || !isNumber(value.y)) return null;
+  const { x, y, shapeId, anchor } = value;
+  if (shapeId === undefined) return { x, y };
+  if (!isString(shapeId)) return null;
+  return isPoint(anchor)
+    ? { x, y, shapeId, anchor: { x: anchor.x, y: anchor.y } }
+    : { x, y, shapeId };
+}
+
+/** Файл картинки или вложения только с известными полями. */
+function parseFileRef(value: unknown): FileRef | null {
+  if (!isRecord(value)) return null;
+  const { id, name, size, type } = value;
+  if (!isString(id) || !isString(name) || !isString(type) || !isNumber(size) || size < 0) {
+    return null;
+  }
+  return { id, name, size, type };
 }
 
 /** Элемент доски из данных Yjs или null, если данные не похожи на элемент. */
@@ -45,20 +73,47 @@ export function parseElement(value: unknown): BoardElement | null {
     return null;
   }
   const { id, z, stroke } = value;
+  // Элементы, нарисованные до появления страниц, лежат на первой странице.
+  const page = isString(value.page) ? value.page : DEFAULT_PAGE;
   if (value.kind === 'arrow') {
-    const { start, end } = value;
-    // У стрелок, нарисованных до появления ломаных, поля route нет: они прямые.
-    const route = value.route === 'elbow' ? 'elbow' : 'straight';
-    return isArrowEnd(start) && isArrowEnd(end)
-      ? { id, kind: 'arrow', start, end, route, stroke, z }
-      : null;
+    const start = parseArrowEnd(value.start);
+    const end = parseArrowEnd(value.end);
+    if (!start || !end) return null;
+    // У стрелок, нарисованных раньше, части полей нет: они выглядят как раньше —
+    // прямая сплошная линия с наконечником на конце и без подписи.
+    const defaults = DEFAULT_ARROW_STYLE;
+    return {
+      id,
+      kind: 'arrow',
+      page,
+      start,
+      end,
+      text: isString(value.text) ? value.text : '',
+      route: value.route === 'elbow' ? 'elbow' : 'straight',
+      startHead: isArrowHead(value.startHead) ? value.startHead : defaults.startHead,
+      endHead: isArrowHead(value.endHead) ? value.endHead : defaults.endHead,
+      dashed: value.dashed === true,
+      stroke,
+      z,
+    };
   }
   const { kind, x, y, w, h, text, fill, points } = value;
   if (!isShapeKind(kind) || !isNumber(x) || !isNumber(y) || !isNumber(w) || !isNumber(h)) {
     return null;
   }
   if (!isString(text) || !isString(fill)) return null;
-  const shape = { id, kind, x, y, w, h, text, fill, stroke, z };
+  const shape = { id, kind, page, x, y, w, h, text, fill, stroke, z };
+  if (kind === 'image' || kind === 'file') {
+    // Картинка и вложение без файла ничего не показывают.
+    const file = parseFileRef(value.file);
+    return file ? { ...shape, file } : null;
+  }
   if (points === undefined) return shape;
   return isNumberArray(points) ? { ...shape, points } : null;
+}
+
+/** Страница из данных Yjs или null, если данные не похожи на страницу. */
+export function parsePage(id: string, value: unknown): Page | null {
+  if (!isRecord(value) || !isString(value.name) || !isNumber(value.order)) return null;
+  return { id, name: value.name, order: value.order };
 }

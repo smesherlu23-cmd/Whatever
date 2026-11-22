@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api, errorText, onSignedOut, syncUrl } from './api';
+import { ApiError, api, errorText, fileUrl, onSignedOut, syncUrl } from './api';
 import { defined } from './testing/helpers';
 import { failure, stubServer } from './testing/server';
 
@@ -33,6 +33,22 @@ describe('api', () => {
     expect(init?.method).toBe('PATCH');
     expect(init?.body).toBe('{"name":"Схема"}');
     expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
+  it('uploads a file as the request body with its name encoded in a header', async () => {
+    const fetch = stubFetch(Response.json({ id: 'f1', name: 'схема.png' }));
+    const content = new Blob(['png'], { type: 'image/png' });
+    await expect(api.uploadFile('b1', content, 'схема сети.png')).resolves.toMatchObject({
+      id: 'f1',
+    });
+    const [url, init] = defined(fetch.mock.calls[0]);
+    expect(url).toBe('/api/boards/b1/files');
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBe(content);
+    expect(new Headers(init?.headers).get('X-File-Name')).toBe(
+      encodeURIComponent('схема сети.png'),
+    );
+    expect(fileUrl('b1', 'f1')).toBe('/api/boards/b1/files/f1');
   });
 
   it('turns an error status into ApiError', async () => {

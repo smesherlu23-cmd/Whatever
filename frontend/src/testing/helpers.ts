@@ -25,3 +25,26 @@ export function shapes(doc: BoardDocument): ShapeElement[] {
 export function arrows(doc: BoardDocument): ArrowElement[] {
   return doc.list().filter(isArrow);
 }
+
+/** Обещание, которое тест выполняет или отклоняет сам, когда нужно. */
+export function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  const handlers: { resolve?: (value: T) => void; reject?: (error: unknown) => void } = {};
+  // Функция внутри Promise выполняется сразу, поэтому обработчики уже есть.
+  const promise = new Promise<T>((resolve, reject) => {
+    handlers.resolve = resolve;
+    handlers.reject = reject;
+  });
+  return {
+    promise,
+    resolve: (value) => {
+      defined(handlers.resolve, 'resolve')(value);
+    },
+    reject: (error) => {
+      defined(handlers.reject, 'reject')(error);
+    },
+  };
+}

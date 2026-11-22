@@ -1,7 +1,21 @@
 import type { ReactNode } from 'react';
-import type { Tool } from '../editor/Editor';
 
-export type IconName = Tool | 'undo' | 'redo';
+/** Иконки панели инструментов. Фигуры из наборов рисует ShapeIcon по каталогу. */
+export type IconName =
+  | 'select'
+  | 'pen'
+  | 'arrow'
+  | 'rectangle'
+  | 'rounded'
+  | 'ellipse'
+  | 'diamond'
+  | 'triangle'
+  | 'sticky'
+  | 'text'
+  | 'shapes'
+  | 'image'
+  | 'undo'
+  | 'redo';
 
 /** Контуры иконок в квадрате 20×20. Рисуются линией цвета текста. */
 const ICONS: Record<IconName, ReactNode> = {
@@ -15,6 +29,20 @@ const ICONS: Record<IconName, ReactNode> = {
   sticky: <path d="M4 4h12v8l-4 4H4zM16 12h-4v4" />,
   arrow: <path d="M4 16L16 4M9 4h7v7" />,
   text: <path d="M5 5h10M10 5v11M7.5 16h5" />,
+  shapes: (
+    <>
+      <circle cx="6.5" cy="6.5" r="3.5" />
+      <rect x="11" y="3" width="6" height="7" rx="1" />
+      <path d="M10 11.5l4.5 6h-9z" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3" y="4" width="14" height="12" rx="1.5" />
+      <path d="M5.5 13.5l3.5-4 2.5 2.5 1.5-1.5 2 3" />
+      <circle cx="13" cy="7.5" r="1.2" />
+    </>
+  ),
   undo: <path d="M7.5 5L4 8.5 7.5 12M4 8.5h8a4 4 0 010 8H9" />,
   redo: <path d="M12.5 5L16 8.5 12.5 12M16 8.5H8a4 4 0 000 8h3" />,
 };

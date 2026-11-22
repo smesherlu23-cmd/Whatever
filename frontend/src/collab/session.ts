@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { reportSignedOut, syncUrl } from '../api';
 import { storageKeys } from '../config';
 import { Editor } from '../editor/Editor';
+import { BoardFiles } from '../files/boardFiles';
 import { BoardDocument } from '../model/document';
 import { Presence } from './presence';
 
@@ -31,6 +32,7 @@ export class BoardSession {
   readonly doc = new Y.Doc();
   readonly editor: Editor;
   readonly presence: Presence;
+  readonly files: BoardFiles;
   private currentStatus: ConnectionStatus = 'connecting';
   private readonly listeners = new Set<() => void>();
 
@@ -40,6 +42,7 @@ export class BoardSession {
   ) {
     this.editor = new Editor(new BoardDocument(this.doc));
     this.presence = new Presence(this.doc.clientID, userName);
+    this.files = new BoardFiles(boardId);
   }
 
   get status(): ConnectionStatus {
@@ -62,7 +65,7 @@ export class BoardSession {
     const local = new IndexeddbPersistence(storageKeys.boardDocument(this.boardId), this.doc);
     const awareness = new Awareness(this.doc);
     const detachPresence = this.presence.attach(awareness);
-    const stopSelectionSync = this.syncSelection();
+    const stopEditorSync = this.syncEditor();
 
     // Коды закрытия 4400–4499 y-websocket считает окончательными и больше не переподключается.
     const provider = new WebsocketProvider(syncUrl(), this.boardId, this.doc, { awareness });
@@ -94,7 +97,7 @@ export class BoardSession {
     });
 
     return () => {
-      stopSelectionSync();
+      stopEditorSync();
       detachPresence();
       provider.destroy();
       awareness.destroy();
@@ -102,14 +105,20 @@ export class BoardSession {
     };
   }
 
-  /** Публикует выделение редактора, когда оно меняется. */
-  private syncSelection(): () => void {
-    let published = this.editor.selection;
-    this.presence.setSelection(published);
+  /** Публикует открытую страницу и выделение редактора, когда они меняются. */
+  private syncEditor(): () => void {
+    let { pageId, selection } = this.editor;
+    this.presence.setPage(pageId);
+    this.presence.setSelection(selection);
     return this.editor.subscribe(() => {
-      if (this.editor.selection === published) return;
-      published = this.editor.selection;
-      this.presence.setSelection(published);
+      if (this.editor.pageId !== pageId) {
+        pageId = this.editor.pageId;
+        this.presence.setPage(pageId);
+      }
+      if (this.editor.selection !== selection) {
+        selection = this.editor.selection;
+        this.presence.setSelection(selection);
+      }
     });
   }
 
