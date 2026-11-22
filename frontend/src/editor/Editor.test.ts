@@ -189,6 +189,35 @@ describe('Editor', () => {
     expect(editor.doc.size).toBe(0);
   });
 
+  it('zooms around the middle of the window and shows the whole page or the selection', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 1000, height: 800 });
+    editor.zoomBy(2);
+    expect(editor.camera.zoom).toBe(2);
+    expect(editor.viewportCenter()).toEqual({ x: 500, y: 400 });
+    editor.resetZoom();
+    expect(editor.camera.zoom).toBe(1);
+
+    editor.centerOn({ x: 0, y: 0 });
+    expect(editor.viewportCenter()).toEqual({ x: 0, y: 0 });
+
+    // На пустой странице показывать нечего, и камера не меняется.
+    const before = editor.camera;
+    editor.zoomToFit();
+    expect(editor.zoomToSelection()).toBe(false);
+    expect(editor.camera).toBe(before);
+
+    editor.setCamera({ x: 0, y: 0, zoom: 1 });
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    editor.setTool('rectangle');
+    drag(editor, [2900, 2000], [3000, 2100]);
+    editor.zoomToFit();
+    expect(editor.camera.zoom).toBeCloseTo(Math.min(904 / 3000, 704 / 2100));
+    expect(editor.zoomToSelection()).toBe(true);
+    expect(editor.viewportCenter().x).toBeCloseTo(2950);
+  });
+
   it('selects shapes fully inside the marquee', () => {
     const editor = new Editor();
     for (const x of [0, 200, 400]) {

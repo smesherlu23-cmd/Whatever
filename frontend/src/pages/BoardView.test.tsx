@@ -69,4 +69,25 @@ describe('BoardView text editing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
     expect(screen.queryByRole('alert')).toBeNull();
   });
+
+  it('zooms with the buttons and remembers whether the minimap is shown', () => {
+    localStorage.removeItem('whatever-minimap');
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    render(<BoardView editor={editor} files={new BoardFiles('b1')} header={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Увеличить' }));
+    expect(editor.camera.zoom).toBe(1.25);
+    fireEvent.click(screen.getByRole('button', { name: 'Уменьшить' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Уменьшить' }));
+    expect(screen.getByRole('button', { name: 'Масштаб 80%, вернуть 100%' })).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Масштаб 80%, вернуть 100%' }));
+    expect(editor.camera.zoom).toBeCloseTo(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Показать всё' }));
+
+    expect(screen.getByLabelText('Мини-карта: щелчок переносит сюда вид')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Мини-карта' }));
+    expect(screen.queryByLabelText('Мини-карта: щелчок переносит сюда вид')).toBeNull();
+    expect(localStorage.getItem('whatever-minimap')).toBe('false');
+  });
 });

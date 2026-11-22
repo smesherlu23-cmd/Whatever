@@ -1,3 +1,4 @@
+import { ZOOM_STEP } from '../canvas/camera';
 import type { Editor, Tool } from './Editor';
 
 export interface KeyInput {
@@ -33,6 +34,19 @@ const CTRL_COMMANDS: Partial<Record<string, (editor: Editor, shift: boolean) => 
   y: (editor) => editor.redo(),
   a: (editor) => editor.select(editor.page.list().map((el) => el.id)),
   d: (editor) => editor.duplicateSelection(),
+  // Масштаб доски вместо масштаба страницы браузера.
+  '=': (editor) => editor.zoomBy(ZOOM_STEP),
+  '+': (editor) => editor.zoomBy(ZOOM_STEP),
+  '-': (editor) => editor.zoomBy(1 / ZOOM_STEP),
+};
+
+/** Масштаб с Shift, по физической клавише цифры: Shift+1 в разных раскладках даёт разные знаки. */
+const ZOOM_KEYS: Partial<Record<string, (editor: Editor) => void>> = {
+  Digit0: (editor) => editor.resetZoom(),
+  Digit1: (editor) => editor.zoomToFit(),
+  Digit2: (editor) => {
+    editor.zoomToSelection();
+  },
 };
 
 /** Латинская буква клавиши: по коду, если он есть, иначе по введённому символу. */
@@ -47,6 +61,11 @@ export function handleShortcut(editor: Editor, input: KeyInput): boolean {
     const command = CTRL_COMMANDS[letterOf(input)];
     command?.(editor, input.shift ?? false);
     return command !== undefined;
+  }
+  const zoom = input.shift && input.code ? ZOOM_KEYS[input.code] : undefined;
+  if (zoom) {
+    zoom(editor);
+    return true;
   }
   switch (input.key.toLowerCase()) {
     case 'delete':

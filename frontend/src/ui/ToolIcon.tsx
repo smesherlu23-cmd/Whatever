@@ -14,6 +14,8 @@ export type IconName =
   | 'text'
   | 'shapes'
   | 'image'
+  | 'fit'
+  | 'map'
   | 'undo'
   | 'redo';
 
@@ -43,6 +45,8 @@ const ICONS: Record<IconName, ReactNode> = {
       <circle cx="13" cy="7.5" r="1.2" />
     </>
   ),
+  fit: <path d="M3 7.5V3h4.5M12.5 3H17v4.5M17 12.5V17h-4.5M7.5 17H3v-4.5" />,
+  map: <path d="M3 5.5l4.5-2 5 2 4.5-2v11l-4.5 2-5-2-4.5 2zM7.5 3.5v11M12.5 5.5v11" />,
   undo: <path d="M7.5 5L4 8.5 7.5 12M4 8.5h8a4 4 0 010 8H9" />,
   redo: <path d="M12.5 5L16 8.5 12.5 12M16 8.5H8a4 4 0 000 8h3" />,
 };

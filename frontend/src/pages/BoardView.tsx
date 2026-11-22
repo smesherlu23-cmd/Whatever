@@ -1,12 +1,17 @@
 import { type ReactNode, useRef, useState } from 'react';
+import { ZOOM_STEP } from '../canvas/camera';
 import { Board } from '../canvas/Board';
+import { Minimap } from '../canvas/Minimap';
 import type { Presence } from '../collab/presence';
+import { storageKeys } from '../config';
 import type { Editor } from '../editor/Editor';
 import { TextEditor } from '../editor/TextEditor';
 import { useEditorState } from '../editor/useEditorState';
 import type { BoardFiles } from '../files/boardFiles';
 import { ShapePanel } from '../ui/ShapePanel';
 import { Toolbar } from '../ui/Toolbar';
+import { useStoredFlag } from '../ui/useStoredFlag';
+import { ZoomControls } from '../ui/ZoomControls';
 import { PageTabs } from './board/PageTabs';
 import { useFileInsert } from './board/useFileInsert';
 import styles from './pages.module.css';
@@ -27,6 +32,7 @@ export function BoardView({
   const [shapesOpen, setShapesOpen] = useState(false);
   const { insert, uploading, error, dismissError } = useFileInsert(editor, files);
   const picker = useRef<HTMLInputElement>(null);
+  const [minimap, setMinimap] = useStoredFlag(storageKeys.minimap, true);
   return (
     <div className={styles.app}>
       {header}
@@ -97,8 +103,17 @@ export function BoardView({
           />
         )}
         <PageTabs editor={editor} pageId={state.pageId} readOnly={state.readOnly} />
-        <div className={styles.zoom} aria-live="polite">
-          {Math.round(state.camera.zoom * 100)}%
+        <div className={styles.navigator}>
+          {minimap && <Minimap editor={editor} presence={presence} />}
+          <ZoomControls
+            zoom={state.camera.zoom}
+            onZoomOut={() => editor.zoomBy(1 / ZOOM_STEP)}
+            onZoomIn={() => editor.zoomBy(ZOOM_STEP)}
+            onReset={() => editor.resetZoom()}
+            onFit={() => editor.zoomToFit()}
+            minimap={minimap}
+            onMinimapToggle={() => setMinimap(!minimap)}
+          />
         </div>
       </main>
     </div>

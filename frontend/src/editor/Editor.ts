@@ -1,9 +1,19 @@
-import { type Camera, initialCamera, panBy, screenToWorld, zoomAt } from '../canvas/camera';
+import {
+  type Camera,
+  type ScreenSize,
+  centerOn,
+  fitCamera,
+  initialCamera,
+  panBy,
+  screenToWorld,
+  zoomAt,
+} from '../canvas/camera';
 import { cloneElements } from '../model/clone';
 import { BoardDocument, type ElementSource } from '../model/document';
 import {
   bindEnd,
   contains,
+  contentBounds,
   distance,
   elementBounds,
   normalizeBounds,
@@ -39,10 +49,7 @@ function isShapeTool(tool: Tool): tool is ShapeTool {
 }
 
 /** Размер холста в экранных пикселях. */
-export interface ViewportSize {
-  width: number;
-  height: number;
-}
+export type ViewportSize = ScreenSize;
 
 /**
  * Заготовка для инструмента фигуры: например, интерфейс — это класс с заранее
@@ -67,6 +74,8 @@ const HANDLE_SIZE_PX = 10;
 const BIND_DISTANCE_PX = 12;
 const MIN_SIZE = 8;
 const DUPLICATE_OFFSET = 24;
+/** Поля вокруг того, что показывают целиком, в пикселях экрана. */
+const FIT_PADDING_PX = 48;
 
 export interface PointerInput {
   button?: number;
@@ -304,6 +313,37 @@ export class Editor {
   /** Середина видимой части холста в мировых координатах. */
   viewportCenter(): Point {
     return this.toWorld({ x: this.viewport.width / 2, y: this.viewport.height / 2 });
+  }
+
+  /** Меняет масштаб, а середина окна остаётся на месте. */
+  zoomBy(factor: number): void {
+    const middle = { x: this.viewport.width / 2, y: this.viewport.height / 2 };
+    this.setCamera(zoomAt(this.camera, middle, factor));
+  }
+
+  /** Масштаб 100% вокруг середины окна. */
+  resetZoom(): void {
+    this.zoomBy(1 / this.camera.zoom);
+  }
+
+  /** Ставит точку доски в середину окна, не меняя масштаб. */
+  centerOn(world: Point): void {
+    this.setCamera(centerOn(this.camera, world, this.viewport));
+  }
+
+  /** Показывает всё, что есть на странице. Мелкое не увеличивает больше 100%. */
+  zoomToFit(): void {
+    const bounds = contentBounds(this.page.list(), this.lookup);
+    if (bounds) this.setCamera(fitCamera(bounds, this.viewport, FIT_PADDING_PX, 1));
+  }
+
+  /** Показывает выделенное во всё окно. Возвращает false, если ничего не выделено. */
+  zoomToSelection(): boolean {
+    const selected = [...this.selection].map(this.lookup).filter((el) => el !== undefined);
+    const bounds = contentBounds(selected, this.lookup);
+    if (!bounds) return false;
+    this.setCamera(fitCamera(bounds, this.viewport, FIT_PADDING_PX));
+    return true;
   }
 
   wheel(screen: Point, deltaX: number, deltaY: number, zoom: boolean): void {

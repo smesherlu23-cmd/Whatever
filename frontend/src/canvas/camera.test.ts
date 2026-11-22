@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ZOOM, initialCamera, panBy, screenToWorld, worldToScreen, zoomAt } from './camera';
+import {
+  MAX_ZOOM,
+  centerOn,
+  fitCamera,
+  initialCamera,
+  panBy,
+  screenToWorld,
+  visibleBounds,
+  worldToScreen,
+  zoomAt,
+} from './camera';
 
 describe('camera', () => {
   it('converts screen and world points both ways', () => {
@@ -24,5 +34,18 @@ describe('camera', () => {
 
   it('clamps zoom', () => {
     expect(zoomAt(initialCamera, { x: 0, y: 0 }, 1000).zoom).toBe(MAX_ZOOM);
+  });
+
+  it('centres a point and fits a frame into the window', () => {
+    const size = { width: 800, height: 600 };
+    const centred = centerOn({ x: 0, y: 0, zoom: 2 }, { x: 100, y: 50 }, size);
+    expect(worldToScreen(centred, { x: 100, y: 50 })).toEqual({ x: 400, y: 300 });
+
+    const fitted = fitCamera({ x: 0, y: 0, w: 1000, h: 300 }, size, 50);
+    expect(fitted.zoom).toBe(0.7);
+    expect(worldToScreen(fitted, { x: 500, y: 150 })).toEqual({ x: 400, y: 300 });
+    // Маленькое не увеличивается сверх предела.
+    expect(fitCamera({ x: 0, y: 0, w: 10, h: 10 }, size, 50, 1).zoom).toBe(1);
+    expect(visibleBounds(fitted, size).w).toBeCloseTo(800 / 0.7);
   });
 });
