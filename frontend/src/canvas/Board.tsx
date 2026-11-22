@@ -10,8 +10,11 @@ const CURSORS: Record<Tool, string> = {
   select: 'default',
   pen: 'crosshair',
   rectangle: 'crosshair',
+  rounded: 'crosshair',
   ellipse: 'crosshair',
   diamond: 'crosshair',
+  triangle: 'crosshair',
+  sticky: 'crosshair',
   arrow: 'crosshair',
   text: 'text',
 };

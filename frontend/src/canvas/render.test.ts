@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Peer } from '../collab/presence';
 import { Editor } from '../editor/Editor';
-import { DEFAULT_FILL, DEFAULT_STROKE, type ShapeElement } from '../model/types';
+import {
+  DEFAULT_FILL,
+  DEFAULT_STICKY_FILL,
+  DEFAULT_STROKE,
+  type ShapeElement,
+} from '../model/types';
 import { type Theme, renderBoard } from './render';
 
 const theme: Theme = {
@@ -13,6 +18,7 @@ const theme: Theme = {
   ink: '#18181b',
   shapeStroke: '#43434a',
   shapeFill: '#ffffff',
+  stickyFill: '#5b5131',
   fontFamily: 'sans-serif',
 };
 
@@ -93,6 +99,7 @@ describe('renderBoard', () => {
     editor.doc.add({
       id: 'arrow',
       kind: 'arrow',
+      route: 'straight',
       start: { x: 0, y: 0, shapeId: 'a' },
       end: { x: 300, y: 300 },
       stroke: DEFAULT_STROKE,
@@ -107,6 +114,55 @@ describe('renderBoard', () => {
     // Наконечник стрелки — закрашенный треугольник, ручки выделения — восемь квадратов.
     expect(named(calls, 'fill').length).toBeGreaterThan(0);
     expect(named(calls, 'fillRect').length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('draws the new shapes: a triangle by its corners, a sticky note without a frame', () => {
+    const editor = new Editor();
+    editor.doc.add(shape('t', 0, 0, { kind: 'triangle', w: 100, h: 100, text: 'Шлюз' }));
+    editor.doc.add(shape('s', 200, 0, { kind: 'sticky', fill: DEFAULT_STICKY_FILL }));
+    editor.doc.add(shape('u', 400, 0, { kind: 'rounded' }));
+    const { ctx, calls } = recordingContext();
+
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+
+    const moves = named(calls, 'moveTo').map(([, x, y]) => [x, y]);
+    expect(moves).toContainEqual([50, 0]);
+    expect(named(calls, 'lineTo').map(([, x, y]) => [x, y])).toEqual(
+      expect.arrayContaining([
+        [100, 100],
+        [0, 100],
+      ]),
+    );
+    // Текст треугольника стоит в его нижней половине, где для него есть место.
+    expect(named(calls, 'fillText')).toEqual([['fillText', 'Шлюз', 50, 75]]);
+    const fills = named(calls, 'set fillStyle').map(([, value]) => value);
+    expect(fills).toContain(theme.stickyFill);
+    expect(named(calls, 'set shadowBlur').length).toBe(1);
+    const radii = named(calls, 'roundRect').map((args) => args[5]);
+    expect(radii).toEqual(expect.arrayContaining([2, 20]));
+  });
+
+  it('draws an elbow arrow through its bends with the head along the last leg', () => {
+    const editor = new Editor();
+    editor.doc.add({
+      id: 'arrow',
+      kind: 'arrow',
+      route: 'elbow',
+      start: { x: 0, y: 0 },
+      end: { x: 100, y: 40 },
+      stroke: DEFAULT_STROKE,
+      z: 1,
+    });
+    const { ctx, calls } = recordingContext();
+
+    renderBoard(ctx, editor, 800, 600, 1, theme);
+
+    const points = named(calls, 'lineTo').map(([, x, y]) => [x, y]);
+    expect(points.slice(0, 3)).toEqual([
+      [50, 0],
+      [50, 40],
+      [100 - 12 * 0.8, 40],
+    ]);
   });
 
   it("draws other participants' cursors with their names", () => {

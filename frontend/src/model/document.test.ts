@@ -33,6 +33,7 @@ describe('BoardDocument', () => {
     const arrow: ArrowElement = {
       id: 'arr',
       kind: 'arrow',
+      route: 'straight',
       start: { x: 10, y: 10, shapeId: 'a' },
       end: { x: 300, y: 10 },
       stroke: '#000',
