@@ -1,20 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness';
 import * as Y from 'yjs';
+import { participant, relay } from '../testing/peers';
 import { Presence } from './presence';
-
-/** Участник со своим документом и awareness, как в отдельной вкладке браузера. */
-function participant(name: string) {
-  const awareness = new Awareness(new Y.Doc());
-  const presence = new Presence(awareness.clientID, name);
-  const detach = presence.attach(awareness);
-  return { awareness, presence, detach };
-}
-
-/** Передаёт состояние from в to — так, как это сделал бы сервер. */
-function relay(from: Awareness, to: Awareness): void {
-  applyAwarenessUpdate(to, encodeAwarenessUpdate(from, [from.clientID]), 'server');
-}
 
 describe('Presence', () => {
   beforeEach(() => {
@@ -29,7 +17,7 @@ describe('Presence', () => {
     const bob = participant('Борис');
     alice.presence.setSelection(['shape-1']);
     alice.presence.setCursor({ x: 10, y: 20 });
-    relay(alice.awareness, bob.awareness);
+    relay(alice, bob);
 
     expect(bob.presence.peers()).toEqual([
       expect.objectContaining({ name: 'Алиса', cursor: { x: 10, y: 20 }, selection: ['shape-1'] }),
@@ -37,21 +25,47 @@ describe('Presence', () => {
     expect(alice.presence.peers()).toEqual([]);
   });
 
-  it('shares the open page and forgets the cursor of the previous page', () => {
+  it('shares the open page and forgets the cursor and view of the previous page', () => {
     const alice = participant('Алиса');
     const bob = participant('Борис');
     alice.presence.setCursor({ x: 10, y: 20 });
     alice.presence.setCursor({ x: 30, y: 40 });
+    alice.presence.setView({ x: 0, y: 0, w: 800, h: 600 });
     alice.presence.setSelection(['shape-1']);
-    relay(alice.awareness, bob.awareness);
+    relay(alice, bob);
     expect(bob.presence.peers()[0]).toMatchObject({ page: 'main' });
 
     alice.presence.setPage('p2');
     alice.presence.setPage('p2');
-    // Отложенный курсор со старой страницы не должен догнать участника на новой.
+    // Отложенные курсор и вид со старой страницы не должны догнать участника на новой.
     vi.advanceTimersByTime(100);
-    relay(alice.awareness, bob.awareness);
-    expect(bob.presence.peers()[0]).toMatchObject({ page: 'p2', cursor: null, selection: [] });
+    relay(alice, bob);
+    expect(bob.presence.peers()[0]).toMatchObject({
+      page: 'p2',
+      cursor: null,
+      view: null,
+      selection: [],
+    });
+  });
+
+  it('sends the cursor and the visible part of the board in one throttled update', () => {
+    const alice = participant('Алиса');
+    const bob = participant('Борис');
+    const updates = vi.fn();
+    alice.awareness.on('update', updates);
+
+    alice.presence.setCursor({ x: 1, y: 1 });
+    alice.presence.setView({ x: 0, y: 0, w: 800, h: 600 });
+    alice.presence.setCursor({ x: 2, y: 2 });
+    expect(updates).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60);
+    expect(updates).toHaveBeenCalledTimes(2);
+
+    relay(alice, bob);
+    expect(bob.presence.peers()[0]).toMatchObject({
+      cursor: { x: 2, y: 2 },
+      view: { x: 0, y: 0, w: 800, h: 600 },
+    });
   });
 
   it('throttles cursor updates but keeps the last position', () => {
@@ -66,6 +80,18 @@ describe('Presence', () => {
     vi.advanceTimersByTime(60);
     expect(updates).toHaveBeenCalledTimes(2);
     expect(awareness.getLocalState()?.cursor).toEqual({ x: 3, y: 3 });
+  });
+
+  it('does not send the same view again', () => {
+    const { awareness, presence } = participant('Алиса');
+    const updates = vi.fn();
+    awareness.on('update', updates);
+    presence.setView({ x: 0, y: 0, w: 800, h: 600 });
+    presence.setView({ x: 0, y: 0, w: 800, h: 600 });
+    vi.advanceTimersByTime(60);
+    presence.setView({ x: 0, y: 0, w: 800, h: 600 });
+    vi.advanceTimersByTime(60);
+    expect(updates).toHaveBeenCalledTimes(1);
   });
 
   it('republishes its state when attached to a new connection', () => {
@@ -87,7 +113,7 @@ describe('Presence', () => {
     const bob = participant('Борис');
     const listener = vi.fn();
     bob.presence.subscribe(listener);
-    relay(alice.awareness, bob.awareness);
+    relay(alice, bob);
     expect(listener).toHaveBeenCalled();
   });
 });
@@ -102,10 +128,23 @@ describe('Presence with broken data from another client', () => {
     applyAwarenessUpdate(awareness, encodeAwarenessUpdate(other, [other.clientID]), 'server');
     expect(presence.peers()).toEqual([]);
 
-    other.setLocalState({ user: { name: 'Борис', color: '#000' }, cursor: 'x', selection: [1] });
+    other.setLocalState({
+      user: { name: 'Борис', color: '#000' },
+      cursor: 'x',
+      view: { x: 0, y: 0, w: -800, h: 600 },
+      selection: [1],
+    });
     applyAwarenessUpdate(awareness, encodeAwarenessUpdate(other, [other.clientID]), 'server');
     expect(presence.peers()).toEqual([
-      expect.objectContaining({ name: 'Борис', cursor: null, selection: [] }),
+      expect.objectContaining({ name: 'Борис', cursor: null, view: null, selection: [] }),
     ]);
+
+    // Лишние поля вида от чужого клиента дальше не идут.
+    other.setLocalState({
+      user: { name: 'Борис', color: '#000' },
+      view: { x: 0, y: 0, w: 800, h: 600, script: 'alert(1)' },
+    });
+    applyAwarenessUpdate(awareness, encodeAwarenessUpdate(other, [other.clientID]), 'server');
+    expect(presence.peers()[0]?.view).toEqual({ x: 0, y: 0, w: 800, h: 600 });
   });
 });

@@ -190,6 +190,7 @@ describe('renderBoard', () => {
       color: '#d1495b',
       page: 'main',
       cursor: { x: 100, y: 100 },
+      view: null,
       selection: [],
     };
     const { ctx, calls } = recordingContext();

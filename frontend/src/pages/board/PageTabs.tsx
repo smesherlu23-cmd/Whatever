@@ -1,20 +1,13 @@
-import { type DragEvent, useCallback, useRef, useState, useSyncExternalStore } from 'react';
+import { type DragEvent, useRef, useState } from 'react';
 import type { Editor } from '../../editor/Editor';
 import { addPage, duplicatePage, movePage, removePage, renamePage } from '../../editor/pages';
-import type { BoardDocument } from '../../model/document';
 import type { Page } from '../../model/types';
 import controls from '../../ui/controls.module.css';
 import { Dialog } from '../../ui/Dialog';
 import dialogStyles from '../../ui/Dialog.module.css';
 import { useDismiss } from '../../ui/useDismiss';
 import styles from './PageTabs.module.css';
-
-/** Страницы доски по порядку. Компонент перерисовывается, только когда меняется их список. */
-export function usePages(doc: BoardDocument): readonly Page[] {
-  const subscribe = useCallback((onChange: () => void) => doc.onChange(onChange), [doc]);
-  const read = useCallback(() => doc.pages(), [doc]);
-  return useSyncExternalStore(subscribe, read);
-}
+import { usePages } from './usePages';
 
 /** Куда встанет перетаскиваемая вкладка: перед этой страницей или в конец (null). */
 interface Drop {

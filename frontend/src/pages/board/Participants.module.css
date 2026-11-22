@@ -1,0 +1,126 @@
+.root {
+  position: relative;
+}
+
+.avatars {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.avatar,
+.more {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.avatar {
+  color: #fff;
+}
+
+/* Участник на другой странице: его курсора здесь не видно. */
+.avatar[data-away] {
+  opacity: 0.55;
+}
+
+/* За этим участником следуют. */
+.avatar[aria-pressed='true'] {
+  opacity: 1;
+  box-shadow:
+    0 0 0 2px var(--bg-panel),
+    0 0 0 4px var(--selection);
+}
+
+.avatar:focus-visible,
+.more:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+}
+
+.more {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.more:hover,
+.more[aria-expanded='true'] {
+  background: var(--bg-active);
+  color: var(--text-on-active);
+}
+
+.list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10;
+  min-width: 220px;
+  max-height: min(420px, 70vh);
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.item[aria-pressed='true'] {
+  background: var(--bg-active);
+  color: var(--text-on-active);
+}
+
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.place {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.item[aria-pressed='true'] .place {
+  color: inherit;
+}

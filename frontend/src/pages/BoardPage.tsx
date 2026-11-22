@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { type Access, ApiError, api, type BoardInfo, canEdit, canManage } from '../api';
 import { useAuth } from '../auth/context';
-import type { Peer } from '../collab/presence';
 import { BoardSession, type ConnectionStatus } from '../collab/session';
 import controls from '../ui/controls.module.css';
 import { AppHeader } from './AppHeader';
 import { forgetAccess, rememberAccess, rememberedAccess } from './boardAccessCache';
 import { ExportDialog } from './board/ExportDialog';
+import { Participants } from './board/Participants';
 import { BoardView } from './BoardView';
 import { NotFoundPage } from './NotFoundPage';
 import styles from './pages.module.css';
@@ -26,7 +26,6 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const { user } = useAuth();
   const [session] = useState(() => new BoardSession(boardId, user.name));
   const [status, setStatus] = useState<ConnectionStatus>(session.status);
-  const [peers, setPeers] = useState<readonly Peer[]>([]);
   const [sharing, setSharing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const board = useBoardInfo(boardId, user.id, status === 'connected');
@@ -36,12 +35,8 @@ export function BoardPage({ boardId }: { boardId: string }) {
     const offStatus = session.subscribe(() => {
       setStatus(session.status);
     });
-    const offPeers = session.presence.subscribe(() => {
-      setPeers(session.presence.peers());
-    });
     return () => {
       offStatus();
-      offPeers();
       stop();
     };
   }, [session]);
@@ -66,18 +61,17 @@ export function BoardPage({ boardId }: { boardId: string }) {
       <BoardView
         editor={session.editor}
         presence={session.presence}
+        follow={session.follow}
         files={session.files}
         header={
           <AppHeader
             actions={
               <>
-                <ul className={styles.peers} aria-label="Участники">
-                  {peers.map((peer) => (
-                    <li key={peer.clientId} title={peer.name} style={{ background: peer.color }}>
-                      {peer.name.slice(0, 1).toUpperCase()}
-                    </li>
-                  ))}
-                </ul>
+                <Participants
+                  editor={session.editor}
+                  presence={session.presence}
+                  follow={session.follow}
+                />
                 <button
                   type="button"
                   className={controls.secondary}

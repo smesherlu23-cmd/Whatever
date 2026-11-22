@@ -6,6 +6,7 @@ import {
   initialCamera,
   panBy,
   screenToWorld,
+  visibleBounds,
   zoomAt,
 } from '../canvas/camera';
 import { cloneElements } from '../model/clone';
@@ -308,6 +309,12 @@ export class Editor {
   setViewport(size: ViewportSize): void {
     this.viewport = size;
     this.emit();
+  }
+
+  /** Видимая часть страницы в мировых координатах; null, пока холст не показан. */
+  visibleArea(): Bounds | null {
+    const { width, height } = this.viewport;
+    return width > 0 && height > 0 ? visibleBounds(this.camera, this.viewport) : null;
   }
 
   /** Середина видимой части холста в мировых координатах. */

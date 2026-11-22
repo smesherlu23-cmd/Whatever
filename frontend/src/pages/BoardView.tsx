@@ -2,6 +2,7 @@ import { type ReactNode, useRef, useState } from 'react';
 import { ZOOM_STEP } from '../canvas/camera';
 import { Board } from '../canvas/Board';
 import { Minimap } from '../canvas/Minimap';
+import type { Follow } from '../collab/follow';
 import type { Presence } from '../collab/presence';
 import { storageKeys } from '../config';
 import type { Editor } from '../editor/Editor';
@@ -12,19 +13,27 @@ import { ShapePanel } from '../ui/ShapePanel';
 import { Toolbar } from '../ui/Toolbar';
 import { useStoredFlag } from '../ui/useStoredFlag';
 import { ZoomControls } from '../ui/ZoomControls';
+import { FollowNotice } from './board/FollowNotice';
 import { PageTabs } from './board/PageTabs';
 import { useFileInsert } from './board/useFileInsert';
+import { useLeader } from './board/useFollow';
 import styles from './pages.module.css';
 
-/** Холст с панелью инструментов. Шапку страницы целиком передаёт родитель. */
+/**
+ * Холст с панелью инструментов. Шапку страницы целиком передаёт родитель.
+ * Пока пользователь следует за участником, доска обведена цветом участника, а любое
+ * нажатие на ней прекращает следование: пользователь взялся за доску сам.
+ */
 export function BoardView({
   editor,
   presence,
+  follow,
   files,
   header,
 }: {
   editor: Editor;
   presence?: Presence;
+  follow?: Follow;
   files: BoardFiles;
   header: ReactNode;
 }) {
@@ -33,10 +42,11 @@ export function BoardView({
   const { insert, uploading, error, dismissError } = useFileInsert(editor, files);
   const picker = useRef<HTMLInputElement>(null);
   const [minimap, setMinimap] = useStoredFlag(storageKeys.minimap, true);
+  const leader = useLeader(follow);
   return (
     <div className={styles.app}>
       {header}
-      <main className={styles.main}>
+      <main className={styles.main} onPointerDownCapture={() => follow?.stop()}>
         <Board
           editor={editor}
           presence={presence}
@@ -44,6 +54,13 @@ export function BoardView({
           onOpenFile={(file) => files.open(file)}
           onInsertFiles={state.readOnly ? undefined : (chosen, at) => void insert(chosen, at)}
         />
+        {leader && (
+          <div
+            className={styles.followFrame}
+            style={{ borderColor: leader.color }}
+            aria-hidden="true"
+          />
+        )}
         {state.editingId && (
           <TextEditor key={state.editingId} editor={editor} id={state.editingId} />
         )}
@@ -82,19 +99,22 @@ export function BoardView({
             if (chosen.length > 0) void insert(chosen, editor.viewportCenter());
           }}
         />
-        {uploading > 0 && (
-          <p className={styles.notice} role="status">
-            {uploading === 1 ? 'Загружается файл…' : `Загружаются файлы: ${uploading}…`}
-          </p>
-        )}
-        {error && uploading === 0 && (
-          <p className={styles.notice} role="alert">
-            {error}
-            <button type="button" className={styles.noticeClose} onClick={dismissError}>
-              Закрыть
-            </button>
-          </p>
-        )}
+        <div className={styles.notices}>
+          {follow && leader && <FollowNotice leader={leader} onStop={() => follow.stop()} />}
+          {uploading > 0 && (
+            <p className={styles.notice} role="status">
+              {uploading === 1 ? 'Загружается файл…' : `Загружаются файлы: ${uploading}…`}
+            </p>
+          )}
+          {error && uploading === 0 && (
+            <p className={styles.notice} role="alert">
+              {error}
+              <button type="button" className={styles.noticeClose} onClick={dismissError}>
+                Закрыть
+              </button>
+            </p>
+          )}
+        </div>
         {shapesOpen && !state.readOnly && (
           <ShapePanel
             tool={state.tool}

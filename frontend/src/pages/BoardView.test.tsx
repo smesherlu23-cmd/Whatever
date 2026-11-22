@@ -1,9 +1,12 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Follow } from '../collab/follow';
 import { Editor } from '../editor/Editor';
 import { BoardFiles } from '../files/boardFiles';
 import type { UploadedFile } from '../api';
+import { BoardDocument } from '../model/document';
 import { deferred, defined, shapes } from '../testing/helpers';
+import { participant, relay } from '../testing/peers';
 import { BoardView } from './BoardView';
 
 describe('BoardView text editing', () => {
@@ -89,5 +92,45 @@ describe('BoardView text editing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Мини-карта' }));
     expect(screen.queryByLabelText('Мини-карта: щелчок переносит сюда вид')).toBeNull();
     expect(localStorage.getItem('whatever-minimap')).toBe('false');
+  });
+
+  it('says whom the user follows and stops on Esc, the button or a click on the board', () => {
+    const me = participant('Борис');
+    const alice = participant('Алиса');
+    alice.presence.setView({ x: 0, y: 0, w: 1600, h: 1200 });
+    relay(alice, me);
+    const editor = new Editor(new BoardDocument(me.ydoc));
+    editor.setViewport({ width: 800, height: 600 });
+    const follow = new Follow(editor, me.presence);
+    render(
+      <BoardView
+        editor={editor}
+        presence={me.presence}
+        follow={follow}
+        files={new BoardFiles('b1')}
+        header={null}
+      />,
+    );
+    const notice = () => screen.queryByText('Вы видите то же, что и Алиса');
+    const start = () => {
+      act(() => {
+        follow.start(alice.id);
+      });
+      expect(notice()).not.toBeNull();
+    };
+
+    start();
+    expect(editor.camera.zoom).toBe(0.5);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(notice()).toBeNull();
+
+    start();
+    fireEvent.click(screen.getByRole('button', { name: 'Перестать следовать' }));
+    expect(notice()).toBeNull();
+
+    start();
+    fireEvent.pointerDown(screen.getByLabelText('Холст доски'), { button: 0 });
+    expect(follow.leader).toBeNull();
+    expect(notice()).toBeNull();
   });
 });

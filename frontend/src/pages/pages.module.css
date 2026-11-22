@@ -38,18 +38,28 @@
   box-shadow: var(--shadow);
 }
 
-/* Сообщение о загрузке файлов под панелью инструментов. */
-.notice {
+/* Сообщения под панелью инструментов: за кем следуют, загрузка файлов, ошибки. */
+.notices {
   position: absolute;
   top: 72px;
   left: 50%;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(560px, calc(100% - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.notice {
+  display: flex;
   align-items: center;
   gap: 12px;
-  max-width: min(560px, calc(100% - 32px));
+  max-width: 100%;
   margin: 0;
   padding: 8px 8px 8px 14px;
-  transform: translateX(-50%);
+  pointer-events: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-panel);
@@ -73,6 +83,22 @@
 
 .noticeClose:hover {
   background: var(--bg-hover);
+}
+
+.noticeDot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: -4px;
+  border-radius: 50%;
+}
+
+/* Рамка цвета участника, за которым следуют. */
+.followFrame {
+  position: absolute;
+  inset: 0;
+  border: 3px solid;
+  pointer-events: none;
 }
 
 /* Мини-карта и масштаб в правом нижнем углу. */
@@ -119,25 +145,6 @@
 
 .spacer {
   flex: 1;
-}
-
-.peers {
-  display: flex;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.peers li {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .page {
