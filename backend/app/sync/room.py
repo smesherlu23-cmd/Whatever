@@ -29,22 +29,29 @@ from pycrdt import (
     read_message,
 )
 from sqlalchemy import delete, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.db import Sessions
 from app.models import Board, BoardUpdate
 
 log = logging.getLogger(__name__)
 
 # Тип сообщения y-websocket «запросить присутствие всех участников».
 QUERY_AWARENESS = 3
-# Сколько дельт копить, прежде чем при закрытии комнаты сжать их в один снимок.
-COMPACT_AFTER = 50
-# Изменения за это время пишутся в базу одной строкой. Перетаскивание фигуры даёт
-# десятки изменений в секунду, и писать каждое по отдельности было бы расточительно.
-SAVE_DELAY_SECONDS = 0.5
 
 Send = Callable[[bytes], Awaitable[None]]
-Sessions = async_sessionmaker[AsyncSession]
+
+
+@dataclass(frozen=True)
+class SavePolicy:
+    """Как комната пишет доску в базу.
+
+    Изменения за delay секунд пишутся одной строкой: перетаскивание фигуры даёт десятки
+    изменений в секунду, и писать каждое по отдельности было бы расточительно. Когда записей
+    истории больше compact_after, при закрытии комнаты они сжимаются в один снимок.
+    """
+
+    delay: float
+    compact_after: int
 
 
 class Connection:
@@ -63,14 +70,15 @@ class Connection:
 class Room:
     """Документ одной доски в памяти и её участники.
 
-    Принятые изменения пишутся в базу с задержкой SAVE_DELAY_SECONDS. Если сервер упадёт
+    Принятые изменения пишутся в базу с задержкой SavePolicy.delay. Если сервер упадёт
     в этот промежуток, изменения не потеряются: у клиентов есть локальная копия,
     и при переподключении протокол Yjs досылает серверу всё, чего у него нет.
     """
 
-    def __init__(self, board_id: uuid.UUID, sessions: Sessions) -> None:
+    def __init__(self, board_id: uuid.UUID, sessions: Sessions, policy: SavePolicy) -> None:
         self.board_id = board_id
         self.sessions = sessions
+        self.policy = policy
         self.doc: Doc[Any] = Doc()
         self.awareness = Awareness(self.doc)
         self.connections: set[Connection] = set()
@@ -124,7 +132,7 @@ class Room:
         if self._closed or self._save_timer is not None:
             return
         loop = asyncio.get_running_loop()
-        self._save_timer = loop.call_later(SAVE_DELAY_SECONDS, self._start_save)
+        self._save_timer = loop.call_later(self.policy.delay, self._start_save)
 
     def _start_save(self) -> None:
         self._save_timer = None
@@ -167,7 +175,7 @@ class Room:
             count = await session.scalar(
                 select(func.count()).where(BoardUpdate.board_id == self.board_id)
             )
-            if not count or count <= COMPACT_AFTER:
+            if not count or count <= self.policy.compact_after:
                 return
             await session.execute(delete(BoardUpdate).where(BoardUpdate.board_id == self.board_id))
             session.add(BoardUpdate(board_id=self.board_id, data=self.doc.get_update()))
@@ -260,8 +268,9 @@ class RoomManager:
     клиент не задерживают подключение к другим доскам.
     """
 
-    def __init__(self, sessions: Callable[[], Sessions]) -> None:
+    def __init__(self, sessions: Sessions, policy: SavePolicy) -> None:
         self._sessions = sessions
+        self._policy = policy
         self._rooms: dict[uuid.UUID, _OpenRoom] = {}
         self._closing: dict[uuid.UUID, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
@@ -279,7 +288,7 @@ class RoomManager:
         async with self._lock:
             entry = self._rooms.get(board_id)
             if entry is None:
-                room = Room(board_id, self._sessions())
+                room = Room(board_id, self._sessions, self._policy)
                 entry = _OpenRoom(room, asyncio.create_task(self._load(room)))
                 self._rooms[board_id] = entry
             entry.room.connections.add(conn)

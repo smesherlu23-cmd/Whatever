@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser
-from app.db import DbSession
+from app.core.db import DbSession
 from app.models import Board, Folder, User
 
 router = APIRouter(prefix="/folders", tags=["folders"])

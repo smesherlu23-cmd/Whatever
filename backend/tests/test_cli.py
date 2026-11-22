@@ -1,10 +1,12 @@
 import io
 import uuid
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import cli
+from app.core.config import get_settings
 from app.main import create_app
 from tests.conftest import log_in
 
@@ -33,3 +35,18 @@ def test_create_admin_validates_input(
 ) -> None:
     with pytest.raises(SystemExit, match="Неверные данные"):
         run(monkeypatch, login, password=password)
+
+
+def test_serve_runs_uvicorn_with_settings_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr("uvicorn.run", lambda app, **options: calls.append({"app": app, **options}))
+    cli.main(["serve", "--host", "0.0.0.0", "--port", "9000"])
+
+    (options,) = calls
+    assert options["app"] == "app.main:create_app"
+    assert options["factory"] is True
+    assert (options["host"], options["port"], options["reload"]) == ("0.0.0.0", 9000, False)
+    assert options["forwarded_allow_ips"] == get_settings().forwarded_allow_ips
+    assert options["log_config"]["root"]["level"] == get_settings().log_level

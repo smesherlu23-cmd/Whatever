@@ -15,36 +15,18 @@ permissions:
 
 jobs:
   backend:
-    name: Backend (lint, types, tests)
+    name: Backend (lint, types, tests, migrations)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync --locked
-      - name: Lint
-        run: uv run ruff check .
-      - name: Formatting
-        run: uv run ruff format --check .
-      - name: Types (mypy strict)
-        run: uv run mypy app tests alembic/env.py
-      - name: Tests with coverage
-        run: uv run pytest --cov --cov-report=term
-
-  migrations:
-    name: Migrations on PostgreSQL
-    runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: whatever
-          POSTGRES_PASSWORD: whatever
+          POSTGRES_PASSWORD: ci-password
           POSTGRES_DB: whatever
         ports: ["5432:5432"]
         options: >-
@@ -52,13 +34,26 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+    # Те же переменные, что в .env: тесты создают рядом свою базу whatever_test.
     env:
-      WHATEVER_DATABASE_URL: postgresql+asyncpg://whatever:whatever@localhost:5432/whatever
+      POSTGRES_HOST: localhost
+      POSTGRES_PASSWORD: ci-password
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
-      - name: Upgrade, downgrade and upgrade again
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+      - name: Formatting
+        run: uv run ruff format --check .
+      - name: Types (mypy strict)
+        run: uv run mypy
+      - name: Tests with coverage
+        run: uv run pytest --cov --cov-report=term
+      - name: Migrations — upgrade, downgrade and upgrade again
         run: |
           uv run alembic upgrade head
           uv run alembic downgrade base
@@ -69,14 +64,15 @@ jobs:
   frontend:
     name: Frontend (format, lint, types, tests, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: frontend/.nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -92,8 +88,35 @@ jobs:
         run: npm run build
 
   docker:
-    name: Docker images
+    name: Docker (lint, build, start, health)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - run: docker compose build
+      - uses: actions/checkout@v7
+      - name: Lint backend Dockerfile
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: backend/Dockerfile
+      - name: Lint frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: frontend/Dockerfile
+      # Пароль со спецсимволами проверяет, что адрес базы собирается правильно.
+      - name: Configure like a server
+        run: |
+          cp .env.example .env
+          sed -i 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci/p@ss:word|' .env
+      - name: Build and start
+        run: docker compose up --build --detach --wait --wait-timeout 180
+      - name: Check the running application
+        run: |
+          curl --fail --silent --show-error http://localhost:8080/api/health
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/
+          test "$(docker compose exec -T backend id -u)" != 0
+          test "$(docker compose exec -T frontend id -u)" != 0
+      - name: Logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop
+        if: always()
+        run: docker compose down --volumes

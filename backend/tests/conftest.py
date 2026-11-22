@@ -1,34 +1,93 @@
+"""Общие фикстуры. Тесты работают с настоящим PostgreSQL, как и рабочий сервер.
+
+Подключение берётся из тех же переменных POSTGRES_*, что и у приложения, но база отдельная —
+<POSTGRES_DB>_test. Её пересоздают при каждом запуске, поэтому данные разработки не пострадают.
+"""
+
+import asyncio
 import os
-import tempfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-_db_dir = tempfile.mkdtemp(prefix="whatever-tests-")
-os.environ["WHATEVER_DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_dir}/test.db"
-
-from alembic.config import Config  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from alembic import command  # noqa: E402
-from app.auth.passwords import hash_password  # noqa: E402
-from app.db import session_factory  # noqa: E402
-from app.main import create_app  # noqa: E402
-from app.models import Role, User  # noqa: E402
+from alembic import command
+from app.auth.passwords import hash_password
+from app.core.config import Settings, get_settings
+from app.core.db import Database
+from app.main import create_app
+from app.models import Role, User
 
 BACKEND = Path(__file__).resolve().parents[1]
+PASSWORD = "correct-horse-battery"
+
+
+def pytest_configure() -> None:
+    """Переключает настройки на тестовую базу до того, как их прочтёт приложение."""
+    try:
+        settings = Settings()
+    except ValidationError as error:
+        raise pytest.UsageError(
+            "Тестам нужен PostgreSQL: задайте POSTGRES_PASSWORD и при необходимости "
+            "POSTGRES_HOST в окружении или в .env (см. .env.example и make db)"
+        ) from error
+    os.environ["POSTGRES_DB"] = f"{settings.postgres_db}_test"
+    get_settings.cache_clear()
+
+
+async def _recreate_database(settings: Settings) -> None:
+    # CREATE и DROP DATABASE не выполняются внутри транзакции, отсюда AUTOCOMMIT.
+    engine = create_async_engine(
+        settings.database_url.set(database="postgres"), isolation_level="AUTOCOMMIT"
+    )
+    name = engine.dialect.identifier_preparer.quote(settings.postgres_db)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+            await connection.execute(text(f"CREATE DATABASE {name}"))
+    except OSError as error:
+        pytest.exit(f"PostgreSQL недоступен ({error}). Запустите его: make db", returncode=2)
+    finally:
+        await engine.dispose()
+
+
+def alembic_config() -> Config:
+    config = Config(str(BACKEND / "alembic.ini"))
+    # Журнал в тестах настраивает pytest.
+    config.attributes["configure_logging"] = False
+    return config
 
 
 @pytest.fixture(scope="session", autouse=True)
 def migrated_database() -> None:
     """Тестовая база создаётся настоящими миграциями, так что они тоже проверяются."""
-    command.upgrade(Config(str(BACKEND / "alembic.ini")), "head")
+    asyncio.run(_recreate_database(get_settings()))
+    command.upgrade(alembic_config(), "head")
 
 
-PASSWORD = "correct-horse-battery"
+def in_app_db[T](client: TestClient, work: Callable[[AsyncSession], Awaitable[T]]) -> T:
+    """Выполняет work с сессией базы приложения в его цикле событий.
+
+    Пул соединений привязан к циклу приложения, поэтому из цикла теста им пользоваться нельзя.
+    """
+    app = client.app
+    assert isinstance(app, FastAPI)
+    database: Database = app.state.database
+
+    async def run() -> T:
+        async with database.sessions() as db:
+            return await work(db)
+
+    assert client.portal is not None
+    return client.portal.call(run)
 
 
 def create_user(
@@ -37,22 +96,19 @@ def create_user(
     """Создаёт пользователя напрямую в базе и возвращает его логин."""
     login = f"user-{uuid.uuid4().hex[:8]}"
 
-    async def create() -> None:
-        async with session_factory()() as db:
-            db.add(
-                User(
-                    login=login,
-                    name=f"Тест {login}",
-                    role=role,
-                    is_active=active,
-                    password_hash=await hash_password(password),
-                )
+    async def create(db: AsyncSession) -> None:
+        db.add(
+            User(
+                login=login,
+                name=f"Тест {login}",
+                role=role,
+                is_active=active,
+                password_hash=await hash_password(password),
             )
-            await db.commit()
+        )
+        await db.commit()
 
-    # Запрос к базе идёт в цикле событий приложения, а не в цикле теста.
-    assert client.portal is not None
-    client.portal.call(create)
+    in_app_db(client, create)
     return login
 
 

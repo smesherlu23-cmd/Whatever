@@ -2,22 +2,10 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import (
-    BigInteger,
-    DateTime,
-    Enum,
-    ForeignKey,
-    Integer,
-    LargeBinary,
-    String,
-    func,
-)
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db import Base
-
-# В SQLite (тесты) автоинкремент работает только у INTEGER.
-BigIntId = BigInteger().with_variant(Integer, "sqlite")
+from app.core.db import Base
 
 
 class Role(StrEnum):
@@ -143,7 +131,7 @@ class BoardUpdate(Base):
 
     __tablename__ = "board_updates"
 
-    id: Mapped[int] = mapped_column(BigIntId, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     board_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("boards.id", ondelete="CASCADE"), index=True
     )

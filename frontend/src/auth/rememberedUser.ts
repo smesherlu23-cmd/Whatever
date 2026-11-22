@@ -1,7 +1,6 @@
 import type { User } from '../api';
+import { storageKeys } from '../config';
 import { isRecord } from '../model/validate';
-
-const STORAGE_KEY = 'whatever-user';
 
 /*
  * Последний вошедший пользователь. Cookie сессии недоступна из JavaScript, поэтому без сети
@@ -10,15 +9,15 @@ const STORAGE_KEY = 'whatever-user';
  */
 
 export function rememberUser(user: User): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+  localStorage.setItem(storageKeys.user, JSON.stringify(user));
 }
 
 export function forgetUser(): void {
-  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(storageKeys.user);
 }
 
 export function rememberedUser(): User | null {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = localStorage.getItem(storageKeys.user);
   if (!saved) return null;
   try {
     return parseUser(JSON.parse(saved));

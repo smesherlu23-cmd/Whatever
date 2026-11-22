@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.api.schemas import Person
 from app.auth.dependencies import current_user
-from app.db import DbSession
+from app.core.db import DbSession
 from app.models import User
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(current_user)])

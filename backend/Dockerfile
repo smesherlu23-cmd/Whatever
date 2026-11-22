@@ -1,13 +1,40 @@
-FROM python:3.12-slim
-COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
+# syntax=docker/dockerfile:1
+# Образ бэкенда: API, синхронизация досок и миграции (alembic upgrade head).
+
+ARG PYTHON_VERSION=3.12
+
+FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+
+# ---------- Зависимости: собираются отдельно, uv и кэш в итоговый образ не попадают ----------
+FROM python:${PYTHON_VERSION}-slim AS build
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+WORKDIR /src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --locked --no-dev --no-install-project
+
+# ---------- Рабочий образ ----------
+FROM python:${PYTHON_VERSION}-slim AS runtime
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH"
+RUN groupadd --system --gid 10001 whatever \
+    && useradd --system --uid 10001 --gid whatever --no-create-home --shell /usr/sbin/nologin whatever
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
-COPY . .
-ENV PATH="/app/.venv/bin:$PATH"
+COPY --from=build /opt/venv /opt/venv
+COPY alembic.ini ./
+COPY alembic ./alembic
+COPY app ./app
+# Код принадлежит root и только читается: процесс не может изменить сам себя.
+RUN python -m compileall -q app alembic
+USER 10001:10001
 EXPOSE 8000
-# exec: uvicorn должен сам получить SIGTERM, чтобы успеть записать несохранённые изменения.
-# Бэкенд доступен только nginx внутри сети compose, поэтому адрес клиента берётся из
-# X-Forwarded-For от любого источника: он нужен защите от подбора пароля.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+# Сервер внутри контейнера слушает все интерфейсы его сети; наружу его публикует только nginx.
+CMD ["python", "-m", "app.cli", "serve", "--host", "0.0.0.0", "--port", "8000"]

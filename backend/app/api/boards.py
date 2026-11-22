@@ -21,7 +21,7 @@ from app.auth.dependencies import (
     ViewableBoard,
     admin_user,
 )
-from app.db import DbSession
+from app.core.db import DbSession
 from app.models import Board, User
 
 router = APIRouter(prefix="/boards", tags=["boards"])

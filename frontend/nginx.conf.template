@@ -1,0 +1,80 @@
+# nginx перед приложением: отдаёт собранный фронтенд и проксирует /api и /ws на бэкенд.
+# Работает без прав root (образ nginx-unprivileged), поэтому слушает порт 8080.
+#
+# Это шаблон: при запуске контейнера образ nginx подставляет в него переменные окружения
+# WHATEVER_* (см. Dockerfile) и кладёт результат в /etc/nginx/conf.d/default.conf.
+
+# Файлы из /assets/ Vite называет по хешу содержимого: их можно кэшировать навсегда.
+# index.html браузер перепроверяет каждый раз, чтобы сразу получить новую версию.
+# Ответам API заголовок кэширования ставит бэкенд (пустое значение nginx не добавляет).
+map $uri $cache_control {
+    ~^/assets/      "public, max-age=31536000, immutable";
+    ~^/(api|ws)/    "";
+    default         "no-cache";
+}
+
+server {
+    listen 8080;
+    root /usr/share/nginx/html;
+    server_tokens off;
+    client_max_body_size 1m;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    # Заголовки задаются здесь и наследуются всеми location: ни один location ниже
+    # не объявляет своих add_header, иначе он потерял бы эти.
+    add_header Cache-Control $cache_control always;
+    add_header X-Content-Type-Options "nosniff" always;
+    # Ссылки доступа (/s/<токен>) не должны уходить на чужие сайты в заголовке Referer.
+    add_header Referrer-Policy "same-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    # Адрес пользователя нужен бэкенду для защиты от подбора пароля. Если перед nginx стоит
+    # внешний прокси (TLS), WHATEVER_TRUSTED_PROXY задаёт его адрес, и nginx берёт адрес
+    # пользователя из последнего элемента X-Forwarded-For, который добавил этот прокси.
+    # Без внешнего прокси nginx видит пользователя сам (по умолчанию доверяет только себе).
+    set_real_ip_from ${WHATEVER_TRUSTED_PROXY};
+    real_ip_header X-Forwarded-For;
+
+    # Бэкенду X-Forwarded-For не дополняется, а заменяется: иначе клиент подставил бы в него
+    # любой адрес и обошёл бы защиту от подбора пароля.
+    #
+    # Host передаётся с портом: бэкенд сверяет его с Origin, чтобы отклонять запросы
+    # с чужих сайтов.
+    location /api/ {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+
+    location /ws/ {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # Доска может быть открыта часами; живость соединения проверяют пинги WebSocket.
+        proxy_read_timeout 1h;
+    }
+
+    # Для healthcheck контейнера: nginx жив и отвечает.
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Несуществующий файл сборки — это 404, а не index.html с вечным кэшем.
+    location /assets/ {
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}

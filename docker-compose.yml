@@ -1,43 +1,88 @@
+# Whatever на одном сервере. Настройки — в .env рядом с этим файлом (см. .env.example):
+#
+#     cp .env.example .env      # задайте POSTGRES_PASSWORD
+#     docker compose up -d --build
+#
+# Наружу публикуется только nginx (сервис frontend). База и бэкенд доступны лишь внутри
+# сети compose.
+
+# Учётные данные базы получают и сервер PostgreSQL, и бэкенд: значения совпадают всегда.
+x-database: &database
+  POSTGRES_USER: ${POSTGRES_USER:-whatever}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в .env (см. .env.example)}
+  POSTGRES_DB: ${POSTGRES_DB:-whatever}
+
+# Журналы контейнеров ограничены по размеру, иначе со временем займут весь диск.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-backend: &backend
+  build: ./backend
+  image: whatever-backend
+  env_file: .env
+  environment:
+    <<: *database
+    # Адрес базы внутри сети compose. Задан здесь явно, чтобы POSTGRES_HOST
+    # и POSTGRES_PORT из .env для разработки не увели бэкенд на чужой адрес.
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+    # Бэкенд недоступен снаружи: к нему обращается только nginx.
+    WHATEVER_FORWARDED_ALLOW_IPS: ${WHATEVER_FORWARDED_ALLOW_IPS:-*}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  logging: *logging
+
 services:
   postgres:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: whatever
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whatever}
-      POSTGRES_DB: whatever
+    environment: *database
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whatever"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
+      timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
+  # Применяет миграции и завершается. Бэкенд стартует только после успешного выполнения,
+  # поэтому никогда не работает со старой схемой базы.
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
 
   backend:
-    build: ./backend
-    environment:
-      WHATEVER_DATABASE_URL: postgresql+asyncpg://whatever:${POSTGRES_PASSWORD:-whatever}@postgres:5432/whatever
-      WHATEVER_REDIS_URL: redis://redis:6379/0
-      # true, когда приложение открывают по HTTPS: cookie сессии не уйдёт по открытому каналу.
-      WHATEVER_COOKIE_SECURE: ${WHATEVER_COOKIE_SECURE:-false}
+    <<: *backend
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
+    # Время на штатную остановку: бэкенд дописывает в базу изменения открытых досок.
+    stop_grace_period: 30s
 
   frontend:
     build: ./frontend
+    image: whatever-frontend
     ports:
-      - "${WHATEVER_PORT:-8080}:80"
+      - "${WHATEVER_PORT:-8080}:8080"
+    environment:
+      # Адрес внешнего прокси (TLS), если он есть. 127.0.0.1 — внешнего прокси нет.
+      WHATEVER_TRUSTED_PROXY: ${WHATEVER_TRUSTED_PROXY:-127.0.0.1}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   postgres-data:

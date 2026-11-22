@@ -1,4 +1,8 @@
-.venv
-__pycache__
-.pytest_cache
-.ruff_cache
+# В образ попадает только то, что нужно для работы: всё остальное запрещено по умолчанию.
+*
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!alembic/
+!app/
+**/__pycache__

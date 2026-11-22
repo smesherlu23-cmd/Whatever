@@ -3,6 +3,7 @@ import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 import { reportSignedOut, syncUrl } from '../api';
+import { storageKeys } from '../config';
 import { Editor } from '../editor/Editor';
 import { BoardDocument } from '../model/document';
 import { Presence } from './presence';
@@ -58,7 +59,7 @@ export class BoardSession {
    */
   start(): () => void {
     this.setStatus('connecting');
-    const local = new IndexeddbPersistence(`whatever-board-${this.boardId}`, this.doc);
+    const local = new IndexeddbPersistence(storageKeys.boardDocument(this.boardId), this.doc);
     const awareness = new Awareness(this.doc);
     const detachPresence = this.presence.attach(awareness);
     const stopSelectionSync = this.syncSelection();

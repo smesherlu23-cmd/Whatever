@@ -1,0 +1,41 @@
+# Быстрые проверки перед каждым коммитом: pre-commit install (один раз после клонирования).
+# Форматтеры и линтеры берутся из зависимостей проекта, поэтому их версии совпадают с CI.
+# Медленные проверки (mypy, ESLint с типами, тесты) запускает make check и CI.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --project backend ruff check --fix --force-exclude
+        language: system
+        types: [python]
+        files: ^backend/
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --project backend ruff format --force-exclude
+        language: system
+        types: [python]
+        files: ^backend/
+      - id: prettier
+        name: prettier
+        entry: frontend/node_modules/.bin/prettier --write --ignore-unknown
+        language: system
+        types: [text]
+        files: ^frontend/
+        exclude: ^frontend/package-lock\.json$
