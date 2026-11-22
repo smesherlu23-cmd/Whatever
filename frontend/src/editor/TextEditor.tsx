@@ -7,7 +7,7 @@ import styles from './TextEditor.module.css';
 
 /** Поле ввода поверх фигуры, текст которой сейчас редактируется. */
 export function TextEditor({ editor, id }: { editor: Editor; id: string }) {
-  const element = editor.doc.get(id);
+  const element = editor.page.get(id);
   const [value, setValue] = useState(() => editor.editingText);
   const ref = useRef<HTMLTextAreaElement>(null);
 

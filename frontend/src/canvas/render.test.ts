@@ -47,6 +47,7 @@ function shape(id: string, x: number, y: number, extra: Partial<ShapeElement> = 
   return {
     id,
     kind: 'rectangle',
+    page: 'main',
     x,
     y,
     w: 100,
@@ -99,6 +100,7 @@ describe('renderBoard', () => {
     editor.doc.add({
       id: 'arrow',
       kind: 'arrow',
+      page: 'main',
       route: 'straight',
       start: { x: 0, y: 0, shapeId: 'a' },
       end: { x: 300, y: 300 },
@@ -147,6 +149,7 @@ describe('renderBoard', () => {
     editor.doc.add({
       id: 'arrow',
       kind: 'arrow',
+      page: 'main',
       route: 'elbow',
       start: { x: 0, y: 0 },
       end: { x: 100, y: 40 },
@@ -171,13 +174,15 @@ describe('renderBoard', () => {
       clientId: 7,
       name: 'Анна',
       color: '#d1495b',
+      page: 'main',
       cursor: { x: 100, y: 100 },
       selection: [],
     };
     const { ctx, calls } = recordingContext();
 
-    renderBoard(ctx, editor, 800, 600, 2, theme, [peer]);
+    renderBoard(ctx, editor, 800, 600, 2, theme, [peer, { ...peer, name: 'Олег', page: 'p2' }]);
 
+    // Олег смотрит другую страницу: его курсора здесь нет.
     expect(named(calls, 'fillText').map(([, text]) => text)).toEqual(['Анна']);
   });
 });

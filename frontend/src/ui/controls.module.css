@@ -2,6 +2,7 @@
 
 .primary,
 .secondary,
+.danger,
 .ghost {
   padding: 8px 14px;
   border-radius: var(--radius);
@@ -20,6 +21,13 @@
   color: var(--text);
 }
 
+/* Необратимое действие: удалить, отозвать. */
+.danger {
+  border: 0;
+  background: var(--danger);
+  color: var(--gray-0);
+}
+
 .ghost {
   padding: 6px 10px;
   border: 0;
@@ -36,6 +44,7 @@
 
 .primary:disabled,
 .secondary:disabled,
+.danger:disabled,
 .ghost:disabled {
   opacity: 0.5;
   cursor: default;

@@ -37,6 +37,23 @@ describe('Presence', () => {
     expect(alice.presence.peers()).toEqual([]);
   });
 
+  it('shares the open page and forgets the cursor of the previous page', () => {
+    const alice = participant('Алиса');
+    const bob = participant('Борис');
+    alice.presence.setCursor({ x: 10, y: 20 });
+    alice.presence.setCursor({ x: 30, y: 40 });
+    alice.presence.setSelection(['shape-1']);
+    relay(alice.awareness, bob.awareness);
+    expect(bob.presence.peers()[0]).toMatchObject({ page: 'main' });
+
+    alice.presence.setPage('p2');
+    alice.presence.setPage('p2');
+    // Отложенный курсор со старой страницы не должен догнать участника на новой.
+    vi.advanceTimersByTime(100);
+    relay(alice.awareness, bob.awareness);
+    expect(bob.presence.peers()[0]).toMatchObject({ page: 'p2', cursor: null, selection: [] });
+  });
+
   it('throttles cursor updates but keeps the last position', () => {
     const { awareness, presence } = participant('Алиса');
     const updates = vi.fn();

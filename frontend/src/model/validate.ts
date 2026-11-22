@@ -1,4 +1,12 @@
-import { type ArrowEnd, type BoardElement, type Point, SHAPE_KINDS, type ShapeKind } from './types';
+import {
+  type ArrowEnd,
+  type BoardElement,
+  DEFAULT_PAGE,
+  type Page,
+  type Point,
+  SHAPE_KINDS,
+  type ShapeKind,
+} from './types';
 
 /*
  * Проверка данных, пришедших от других участников. Документ доски и присутствие приходят
@@ -45,12 +53,14 @@ export function parseElement(value: unknown): BoardElement | null {
     return null;
   }
   const { id, z, stroke } = value;
+  // Элементы, нарисованные до появления страниц, лежат на первой странице.
+  const page = isString(value.page) ? value.page : DEFAULT_PAGE;
   if (value.kind === 'arrow') {
     const { start, end } = value;
     // У стрелок, нарисованных до появления ломаных, поля route нет: они прямые.
     const route = value.route === 'elbow' ? 'elbow' : 'straight';
     return isArrowEnd(start) && isArrowEnd(end)
-      ? { id, kind: 'arrow', start, end, route, stroke, z }
+      ? { id, kind: 'arrow', page, start, end, route, stroke, z }
       : null;
   }
   const { kind, x, y, w, h, text, fill, points } = value;
@@ -58,7 +68,13 @@ export function parseElement(value: unknown): BoardElement | null {
     return null;
   }
   if (!isString(text) || !isString(fill)) return null;
-  const shape = { id, kind, x, y, w, h, text, fill, stroke, z };
+  const shape = { id, kind, page, x, y, w, h, text, fill, stroke, z };
   if (points === undefined) return shape;
   return isNumberArray(points) ? { ...shape, points } : null;
+}
+
+/** Страница из данных Yjs или null, если данные не похожи на страницу. */
+export function parsePage(id: string, value: unknown): Page | null {
+  if (!isRecord(value) || !isString(value.name) || !isNumber(value.order)) return null;
+  return { id, name: value.name, order: value.order };
 }

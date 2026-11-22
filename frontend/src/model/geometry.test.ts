@@ -5,6 +5,7 @@ import type { ArrowElement, BoardElement, ShapeElement } from './types';
 const shape = (kind: ShapeElement['kind'], x = 0, y = 0): ShapeElement => ({
   id: kind,
   kind,
+  page: 'main',
   x,
   y,
   w: 100,
@@ -54,6 +55,7 @@ describe('geometry', () => {
     const arrow: ArrowElement = {
       id: 'arr',
       kind: 'arrow',
+      page: 'main',
       route: 'straight',
       start: { x: 0, y: 0, shapeId: 'rectangle' },
       end: { x: 0, y: 0, shapeId: 'b' },
@@ -78,6 +80,7 @@ describe('elbow arrows', () => {
   const arrow: ArrowElement = {
     id: 'arr',
     kind: 'arrow',
+    page: 'main',
     route: 'elbow',
     start: { x: 0, y: 0, shapeId: 'rectangle' },
     end: { x: 0, y: 0, shapeId: 'b' },

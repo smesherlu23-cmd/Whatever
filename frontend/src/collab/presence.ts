@@ -1,5 +1,5 @@
 import type { Awareness } from 'y-protocols/awareness';
-import type { Point } from '../model/types';
+import { DEFAULT_PAGE, type Point } from '../model/types';
 import { isPoint, isRecord, isStringArray } from '../model/validate';
 import { colorFor } from './colors';
 
@@ -7,6 +7,8 @@ export interface Peer {
   clientId: number;
   name: string;
   color: string;
+  /** Страница, которую участник сейчас смотрит. Курсор и выделение относятся к ней. */
+  page: string;
   cursor: Point | null;
   selection: readonly string[];
 }
@@ -14,13 +16,14 @@ export interface Peer {
 /** То, что участник публикует о себе через awareness. */
 interface PresenceState {
   user?: { name: string; color: string };
+  page?: string;
   cursor?: Point | null;
   selection?: readonly string[];
 }
 
 /** Участник из состояния awareness или null, если состояние неполное или битое. */
 function parsePeer(clientId: number, state: Record<string, unknown>): Peer | null {
-  const { user, cursor, selection } = state;
+  const { user, page, cursor, selection } = state;
   if (!isRecord(user)) return null;
   const { name, color } = user;
   if (typeof name !== 'string' || typeof color !== 'string') return null;
@@ -28,6 +31,7 @@ function parsePeer(clientId: number, state: Record<string, unknown>): Peer | nul
     clientId,
     name,
     color,
+    page: typeof page === 'string' ? page : DEFAULT_PAGE,
     cursor: isPoint(cursor) ? cursor : null,
     selection: isStringArray(selection) ? selection : [],
   };
@@ -56,7 +60,12 @@ export class Presence {
     private readonly clientId: number,
     name: string,
   ) {
-    this.local = { user: { name, color: colorFor(clientId) }, cursor: null, selection: [] };
+    this.local = {
+      user: { name, color: colorFor(clientId) },
+      page: DEFAULT_PAGE,
+      cursor: null,
+      selection: [],
+    };
   }
 
   /** Публикует состояние через awareness соединения. Возвращает функцию отключения. */
@@ -82,6 +91,14 @@ export class Presence {
 
   setSelection(ids: Iterable<string>): void {
     this.publish({ selection: [...ids] });
+  }
+
+  /** Другая страница: курсор с прежней страницы там ничего не значит и убирается. */
+  setPage(page: string): void {
+    if (page === this.local.page) return;
+    this.pendingCursor = undefined;
+    this.cancelCursorTimer();
+    this.publish({ page, cursor: null, selection: [] });
   }
 
   /** Курсор отправляется не чаще CURSOR_INTERVAL_MS; последнее положение не теряется. */

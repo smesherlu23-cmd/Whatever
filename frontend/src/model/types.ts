@@ -21,9 +21,21 @@ export const SHAPE_KINDS: readonly ShapeKind[] = [
 /** straight — отрезок между концами, elbow — ломаная из горизонтальных и вертикальных участков. */
 export type ArrowRoute = 'straight' | 'elbow';
 
+/** Страница, на которой лежат элементы, нарисованные до появления страниц. */
+export const DEFAULT_PAGE = 'main';
+
+/** Страница доски. Порядок вкладок задаёт order, а не место в документе. */
+export interface Page {
+  id: string;
+  name: string;
+  order: number;
+}
+
 export interface ShapeElement {
   id: string;
   kind: ShapeKind;
+  /** id страницы. У элементов, нарисованных до появления страниц, — DEFAULT_PAGE. */
+  page: string;
   x: number;
   y: number;
   w: number;
@@ -46,6 +58,7 @@ export interface ArrowEnd {
 export interface ArrowElement {
   id: string;
   kind: 'arrow';
+  page: string;
   start: ArrowEnd;
   end: ArrowEnd;
   route: ArrowRoute;

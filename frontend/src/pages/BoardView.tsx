@@ -5,6 +5,7 @@ import type { Editor } from '../editor/Editor';
 import { TextEditor } from '../editor/TextEditor';
 import { useEditorState } from '../editor/useEditorState';
 import { Toolbar } from '../ui/Toolbar';
+import { PageTabs } from './board/PageTabs';
 import styles from './pages.module.css';
 
 /** Холст с панелью инструментов. Шапку страницы целиком передаёт родитель. */
@@ -45,6 +46,7 @@ export function BoardView({
             />
           )}
         </div>
+        <PageTabs editor={editor} pageId={state.pageId} readOnly={state.readOnly} />
         <div className={styles.zoom} aria-live="polite">
           {Math.round(state.camera.zoom * 100)}%
         </div>

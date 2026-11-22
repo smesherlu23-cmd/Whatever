@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { BoardDocument } from './document';
-import { parseElement } from './validate';
+import { parseElement, parsePage } from './validate';
 
 const rectangle = {
   id: 'r1',
   kind: 'rectangle',
+  page: 'p1',
   x: 0,
   y: 0,
   w: 100,
@@ -25,6 +26,7 @@ describe('parseElement', () => {
     const arrow = {
       id: 'a1',
       kind: 'arrow',
+      page: 'p1',
       start: { x: 0, y: 0, shapeId: 'r1' },
       end: { x: 10, y: 10 },
       route: 'elbow',
@@ -35,6 +37,10 @@ describe('parseElement', () => {
     for (const kind of ['rounded', 'triangle', 'sticky']) {
       expect(parseElement({ ...rectangle, kind })).toMatchObject({ kind });
     }
+  });
+
+  it('puts elements drawn before pages existed on the first page', () => {
+    expect(parseElement({ ...rectangle, page: undefined })).toMatchObject({ page: 'main' });
   });
 
   it('reads arrows without a line kind, or with an unknown one, as straight', () => {
@@ -66,11 +72,24 @@ describe('parseElement', () => {
   });
 });
 
+describe('parsePage', () => {
+  it('reads a page and rejects a broken one', () => {
+    expect(parsePage('p1', { name: 'Схема', order: 2 })).toEqual({
+      id: 'p1',
+      name: 'Схема',
+      order: 2,
+    });
+    expect(parsePage('p1', { name: 'Схема' })).toBeNull();
+    expect(parsePage('p1', { name: 7, order: 1 })).toBeNull();
+    expect(parsePage('p1', null)).toBeNull();
+  });
+});
+
 describe('BoardDocument with data from another client', () => {
   it('skips a broken element instead of failing', () => {
     const shared = new Y.Doc();
     const doc = new BoardDocument(shared);
-    doc.add({ ...rectangle, kind: 'rectangle' });
+    doc.add({ ...rectangle, kind: 'rectangle', page: 'main' });
     // Чужой клиент с ошибкой записал элемент без координат.
     const broken = new Y.Map<unknown>([
       ['id', 'bad'],

@@ -163,7 +163,7 @@ function drawArrow(
   editor: Editor,
   theme: Theme,
 ): void {
-  const path = arrowPath(el, (id) => editor.doc.get(id));
+  const path = arrowPath(el, (id) => editor.page.get(id));
   const vertices = pathVertices(path);
   const { end } = path;
   // Наконечник смотрит вдоль последнего участка ненулевой длины.
@@ -198,12 +198,12 @@ function drawArrow(
 
 function drawSelection(ctx: CanvasRenderingContext2D, editor: Editor, theme: Theme): void {
   const zoom = editor.camera.zoom;
-  const lookup = (id: string) => editor.doc.get(id);
+  const lookup = (id: string) => editor.page.get(id);
   ctx.strokeStyle = theme.selection;
   ctx.lineWidth = 1.25 / zoom;
   ctx.setLineDash(editor.selection.size > 1 ? [4 / zoom, 3 / zoom] : []);
   for (const id of editor.selection) {
-    const el = editor.doc.get(id);
+    const el = editor.page.get(id);
     if (!el || isArrow(el)) continue;
     const pad = 4 / zoom;
     ctx.strokeRect(el.x - pad, el.y - pad, el.w + pad * 2, el.h + pad * 2);
@@ -239,21 +239,22 @@ function drawStroke(ctx: CanvasRenderingContext2D, editor: Editor, theme: Theme)
   ctx.stroke();
 }
 
-/** Выделения и курсоры других участников, каждый своим цветом. */
+/** Выделения и курсоры других участников на той же странице, каждый своим цветом. */
 function drawPeers(
   ctx: CanvasRenderingContext2D,
   editor: Editor,
-  peers: readonly Peer[],
+  everyone: readonly Peer[],
   dpr: number,
   theme: Theme,
 ): void {
   const { zoom } = editor.camera;
-  const lookup = (id: string) => editor.doc.get(id);
+  const peers = everyone.filter((peer) => peer.page === editor.pageId);
+  const lookup = (id: string) => editor.page.get(id);
   for (const peer of peers) {
     ctx.strokeStyle = peer.color;
     ctx.lineWidth = 2 / zoom;
     for (const id of peer.selection) {
-      const el = editor.doc.get(id);
+      const el = editor.page.get(id);
       if (!el) continue;
       const b = elementBounds(el, lookup);
       const pad = 6 / zoom;
@@ -318,9 +319,9 @@ export function renderBoard(
     w: bottomRight.x - topLeft.x,
     h: bottomRight.y - topLeft.y,
   };
-  const lookup = (id: string) => editor.doc.get(id);
+  const lookup = (id: string) => editor.page.get(id);
 
-  for (const el of editor.doc.list()) {
+  for (const el of editor.page.list()) {
     if (!intersects(viewport, elementBounds(el, lookup))) continue;
     if (isArrow(el)) drawArrow(ctx, el, editor, theme);
     else drawShape(ctx, el, el.id === editor.editingId, theme);
