@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         env_prefix="WHATEVER_",
         env_file=ROOT_ENV_FILE,
         env_file_encoding="utf-8",
-        # В .env лежат и переменные docker compose (WHATEVER_PORT), бэкенду они не нужны.
+        # В .env лежат и переменные compose и nginx (WHATEVER_PORT и др.): бэкенду они не нужны.
         extra="ignore",
         frozen=True,
         validate_by_name=True,
