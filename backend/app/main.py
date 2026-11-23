@@ -21,6 +21,7 @@ from app.api import (
     sync,
     templates,
     users,
+    versions,
 )
 from app.auth.dependencies import same_origin
 from app.auth.throttle import LoginThrottle
@@ -58,7 +59,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rooms = RoomManager(
             database.sessions,
             SavePolicy(
-                delay=config.sync_save_delay_seconds, compact_after=config.sync_compact_after
+                delay=config.sync_save_delay_seconds,
+                compact_after=config.sync_compact_after,
+                version_interval=config.version_interval,
+                version_retention=config.version_retention,
             ),
         )
         app.state.database = database
@@ -89,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         folders.router,
         sharing.router,
         templates.router,
+        versions.router,
         users.router,
         admin.router,
     ):

@@ -3,12 +3,13 @@ import { type Comment, type CommentThread, errorText, type Person } from '../../
 import { splitMentions } from '../../comments/mentions';
 import type { CommentsState, CommentStore } from '../../comments/store';
 import { type ThreadFilter, filterThreads, isOpen } from '../../comments/threads';
-import { formatWhen } from '../../comments/time';
+import { formatWhen } from '../../ui/time';
 import type { Editor } from '../../editor/Editor';
 import { useEditorState } from '../../editor/useEditorState';
 import { shapeSpec } from '../../model/shapes';
 import { type BoardElement, type Page, isArrow } from '../../model/types';
 import controls from '../../ui/controls.module.css';
+import { SidePanel } from '../../ui/SidePanel';
 import { CommentComposer } from './CommentComposer';
 import type { DraftPin } from './CommentPins';
 import styles from './CommentsPanel.module.css';
@@ -54,7 +55,6 @@ export function CommentsPanel({
   onDraftDone: () => void;
   onClose: () => void;
 }) {
-  const titleId = useId();
   const [filter, setFilter] = useState<ThreadFilter>('open');
   const { pageId } = useEditorState(editor);
   const pages = usePages(editor.doc);
@@ -108,20 +108,9 @@ export function CommentsPanel({
   }
 
   return (
-    <aside className={styles.panel} aria-labelledby={titleId}>
-      <header className={styles.header}>
-        <h2 id={titleId}>Обсуждения</h2>
-        <button
-          type="button"
-          className={controls.ghost}
-          aria-label="Закрыть обсуждения"
-          onClick={onClose}
-        >
-          ✕
-        </button>
-      </header>
+    <SidePanel title="Обсуждения" closeLabel="Закрыть обсуждения" onClose={onClose}>
       {body}
-    </aside>
+    </SidePanel>
   );
 }
 

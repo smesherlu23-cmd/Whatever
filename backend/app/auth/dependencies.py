@@ -7,6 +7,7 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from starlette.requests import HTTPConnection
 
@@ -84,6 +85,16 @@ class BoardAccess:
     access: Access
 
 
+async def require_access(db: AsyncSession, board: Board, user: User, needed: Access) -> Access:
+    """Права пользователя на доску, если они не ниже needed. Иначе — ответ 403."""
+    access = await access_to(db, board, user)
+    if access is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, NO_ACCESS)
+    if not access.allows(needed):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав для этого действия")
+    return access
+
+
 def board_access(needed: Access) -> Callable[..., Awaitable[BoardAccess]]:
     """Зависимость: доска board_id из пути, если у пользователя есть доступ не ниже needed."""
 
@@ -91,12 +102,7 @@ def board_access(needed: Access) -> Callable[..., Awaitable[BoardAccess]]:
         board = await db.get(Board, board_id, options=[joinedload(Board.owner)])
         if board is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Доска не найдена")
-        access = await access_to(db, board, user)
-        if access is None:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, NO_ACCESS)
-        if not access.allows(needed):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав для этого действия")
-        return BoardAccess(board, user, access)
+        return BoardAccess(board, user, await require_access(db, board, user, needed))
 
     return dependency
 

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as Y from 'yjs';
+import { BoardDocument } from '../model/document';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
 import {
   DEFAULT_FILL,
@@ -523,5 +525,34 @@ describe('Editor in read-only mode', () => {
     editor.setReadOnly(false);
     editor.setTool('ellipse');
     expect(editor.tool).toBe('ellipse');
+  });
+});
+
+describe('Editor.restoreVersion', () => {
+  it('keeps the typed text, then restores the version as one undoable change', () => {
+    const editor = new Editor();
+    editor.doc.add(rectangle('a', 0, 0));
+    const version = new BoardDocument();
+    Y.applyUpdate(version.doc, Y.encodeStateAsUpdate(editor.doc.doc));
+    editor.doc.add(rectangle('b', 300, 0));
+    editor.startEditing('a');
+    editor.setEditingText('Набранный текст');
+    editor.select(['b']);
+
+    expect(editor.restoreVersion(version)).toBe(true);
+    expect(editor.editingId).toBeNull();
+    expect(editor.doc.has('b')).toBe(false);
+    expect(editor.selection.size).toBe(0);
+    editor.undo();
+    expect(editor.doc.has('b')).toBe(true);
+    expect(editor.doc.get('a')).toMatchObject({ text: 'Набранный текст' });
+  });
+
+  it('does nothing while the board is read-only', () => {
+    const editor = new Editor();
+    editor.doc.add(rectangle('a', 0, 0));
+    editor.setReadOnly(true);
+    expect(editor.restoreVersion(new BoardDocument())).toBe(false);
+    expect(editor.doc.has('a')).toBe(true);
   });
 });

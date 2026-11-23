@@ -899,6 +899,21 @@ export class Editor {
     this.emit();
   }
 
+  /**
+   * Делает доску такой, как в версии (см. BoardDocument.restoreFrom): одна правка, которую
+   * отменяет Ctrl+Z. Набранный текст сохраняется до этого. Возвращает false, если доску
+   * сейчас править нельзя.
+   */
+  restoreVersion(version: BoardDocument): boolean {
+    if (this.readOnly) return false;
+    this.stopEditing();
+    this.interaction = { type: 'none' };
+    this.stroke = null;
+    this.marquee = null;
+    this.doc.restoreFrom(version);
+    return true;
+  }
+
   undo(): void {
     if (!this.readOnly) this.doc.undo();
   }

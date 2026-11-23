@@ -124,6 +124,18 @@ export interface Notifications {
   items: AppNotification[];
 }
 
+/** Версия доски: её содержимое в какой-то момент. Само содержимое загружается отдельно. */
+export interface BoardVersion {
+  id: string;
+  /** У автоматических версий названия нет. */
+  name: string | null;
+  created_at: string;
+  /** Кто сохранил версию вручную. */
+  saved_by: Person | null;
+  /** Кто менял доску после предыдущей версии. */
+  editors: Person[];
+}
+
 export type Role = 'admin' | 'user';
 
 export interface User {
@@ -331,6 +343,18 @@ export const api = {
   /** Отмечает прочитанными уведомления об обсуждении: его открыли. */
   readThread: (threadId: string) => sendEmpty(`/threads/${threadId}/read`, { method: 'POST' }),
   readAllNotifications: () => sendEmpty('/notifications/read-all', { method: 'POST' }),
+
+  /** Версии доски, начиная с новых. */
+  listVersions: (boardId: string) => sendJson<BoardVersion[]>(`/boards/${boardId}/versions`),
+  /** Сохраняет версию с тем, что сейчас на доске. */
+  saveVersion: (boardId: string, name: string) =>
+    sendJson<BoardVersion>(`/boards/${boardId}/versions`, { method: 'POST', body: { name } }),
+  renameVersion: (versionId: string, name: string) =>
+    sendJson<BoardVersion>(`/versions/${versionId}`, { method: 'PATCH', body: { name } }),
+  deleteVersion: (versionId: string) => sendEmpty(`/versions/${versionId}`, { method: 'DELETE' }),
+  /** Содержимое доски в версии одним обновлением Yjs. */
+  versionState: async (versionId: string): Promise<Uint8Array> =>
+    new Uint8Array(await (await send(`/versions/${versionId}/state`)).arrayBuffer()),
 
   listUsers: () => sendJson<User[]>('/admin/users'),
   createUser: (user: NewUser) => sendJson<User>('/admin/users', { method: 'POST', body: user }),

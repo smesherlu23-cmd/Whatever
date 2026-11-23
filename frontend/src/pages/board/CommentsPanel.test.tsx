@@ -14,9 +14,9 @@ import {
 } from '../../model/types';
 import { ANNA, IVAN, OLGA, comment, thread } from '../../testing/comments';
 import { defined } from '../../testing/helpers';
+import { useSnapshot } from '../../ui/useSnapshot';
 import type { DraftPin } from './CommentPins';
 import { CommentsPanel, type Viewer } from './CommentsPanel';
-import { useComments } from './useComments';
 
 function box(id: string, text: string): ShapeElement {
   return {
@@ -93,7 +93,7 @@ function Discussion({
   editor: Editor;
   onClose: () => void;
 }) {
-  const comments = useComments(store);
+  const comments = useSnapshot(store);
   const [selectedId, setSelectedId] = useState(selected);
   const [shownDraft, setDraft] = useState(draft);
   return (
@@ -225,9 +225,13 @@ describe('CommentsPanel', () => {
     const reply = vi.spyOn(api, 'reply').mockResolvedValue(answered);
     fireEvent.change(field('Ответ'), { target: { value: '  Спасибо  ' } });
     fireEvent.keyDown(field('Ответ'), { key: 'Enter' });
-    expect(await screen.findByText('Спасибо')).toBeTruthy();
+    // Текст ещё и в поле ввода, пока ответ не отправлен: ищем его в ленте.
+    expect(await screen.findByText('Спасибо', { ignore: 'textarea' })).toBeTruthy();
     expect(reply).toHaveBeenCalledWith('t1', 'Спасибо');
-    expect(field('Ответ').value).toBe('');
+    // Поле очищается, когда сервер принял ответ, — сразу после того, как ответ виден в ленте.
+    await waitFor(() => {
+      expect(field('Ответ').value).toBe('');
+    });
 
     const resolvedAt = new Date().toISOString();
     vi.spyOn(api, 'setThreadResolved').mockResolvedValue({
@@ -277,7 +281,7 @@ describe('CommentsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Изменить' }));
     fireEvent.change(field('Текст комментария'), { target: { value: 'Я, до пятницы' } });
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
-    expect(await screen.findByText('Я, до пятницы')).toBeTruthy();
+    expect(await screen.findByText('Я, до пятницы', { ignore: 'textarea' })).toBeTruthy();
     expect(edit).toHaveBeenCalledWith('c2', 'Я, до пятницы');
     expect(screen.queryByRole('textbox', { name: 'Текст комментария' })).toBeNull();
   });
@@ -299,16 +303,24 @@ describe('CommentsPanel', () => {
       expect(screen.queryByText('Я')).toBeNull();
     });
     expect(deleteComment).toHaveBeenCalledWith('c2');
+    // Кнопки заняты, пока удаление не закончилось, — и чуть дольше, чем комментарий виден.
+    const deleteThread = () => screen.getByRole('button', { name: 'Удалить обсуждение' });
+    await waitFor(() => {
+      expect(deleteThread()).toHaveProperty('disabled', false);
+    });
 
     vi.spyOn(api, 'deleteThread')
       .mockRejectedValueOnce(new ApiError(403, 'Удалить обсуждение может его автор', 'Forbidden'))
       .mockResolvedValue();
-    fireEvent.click(screen.getByRole('button', { name: 'Удалить обсуждение' }));
+    fireEvent.click(deleteThread());
     expect(confirm).toHaveBeenLastCalledWith('Удалить обсуждение вместе со всеми ответами?');
     expect((await screen.findByRole('alert')).textContent).toBe(
       'Удалить обсуждение может его автор',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Удалить обсуждение' }));
+    await waitFor(() => {
+      expect(deleteThread()).toHaveProperty('disabled', false);
+    });
+    fireEvent.click(deleteThread());
     expect(await screen.findByRole('radio', { name: /^Открытые/ })).toBeTruthy();
     expect(items()).toHaveLength(2);
   });

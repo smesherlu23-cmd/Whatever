@@ -1,19 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
 import { type Access, ApiError, api, type BoardInfo, canEdit, canManage } from '../api';
 import { useAuth } from '../auth/context';
 import { BoardSession, type ConnectionStatus } from '../collab/session';
 import { anchorAt, pinPoint } from '../comments/anchor';
+import type { CommentsState } from '../comments/store';
 import { isOpen } from '../comments/threads';
 import { useNotificationStore } from '../notifications/context';
 import { boardPath, navigate } from '../router';
 import controls from '../ui/controls.module.css';
+import { useSnapshot } from '../ui/useSnapshot';
+import { versionPhrase } from '../versions/preview';
+import { VersionViewer } from '../versions/viewer';
 import { AppHeader } from './AppHeader';
 import { forgetAccess, rememberAccess, rememberedAccess } from './boardAccessCache';
 import { CommentPins, type DraftPin } from './board/CommentPins';
 import { CommentsPanel } from './board/CommentsPanel';
 import { ExportDialog } from './board/ExportDialog';
 import { Participants } from './board/Participants';
-import { useComments } from './board/useComments';
+import { VersionBanner } from './board/VersionBanner';
+import { VersionsPanel } from './board/VersionsPanel';
 import { FromTemplateDialog } from './boards/NewBoardDialog';
 import { BoardView } from './BoardView';
 import { NotFoundPage } from './NotFoundPage';
@@ -29,6 +34,9 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 };
 
 const NO_ACCESS = 'Нет доступа к доске. Попросите владельца поделиться ею.';
+
+/** Боковая панель доски: обсуждения или история версий. Открыта одна из них. */
+type Panel = 'discussion' | 'history';
 
 /**
  * Страница доски. threadId — обсуждение, открытое в панели: оно берётся из адреса, поэтому
@@ -48,7 +56,13 @@ export function BoardPage({
   const [exporting, setExporting] = useState(false);
   const [copying, setCopying] = useState(false);
   const board = useBoardInfo(boardId, user.id, status === 'connected');
-  const discussion = useDiscussion(session, boardId, threadId);
+  const [panel, setPanel] = useState<Panel | null>(threadId === null ? null : 'discussion');
+  const discussion = useDiscussion(session, boardId, threadId, panel, setPanel);
+  const [viewer] = useState(
+    () => new VersionViewer(session.versions, session.editor, session.follow),
+  );
+  const viewed = useSnapshot(viewer);
+  const { versions } = useSnapshot(session.versions);
 
   useEffect(() => {
     const stop = session.start();
@@ -61,15 +75,33 @@ export function BoardPage({
     };
   }, [session]);
 
+  useEffect(() => viewer.start(), [viewer]);
+
   useEffect(() => {
     session.presence.setUser(user.name);
   }, [session, user.name]);
 
   // Пока права неизвестны (без сети и без запомненных прав), доска открывается для просмотра.
   const editable = board.access !== null && canEdit(board.access);
+  const manages = board.access !== null && canManage(board.access);
   useEffect(() => {
     session.editor.setReadOnly(!editable);
   }, [session, editable]);
+
+  // Историю видят те, кто может править доску. Если права отобрали, видна снова сама доска.
+  const historyOpen = panel === 'history' && editable;
+  const preview = historyOpen ? viewed.preview : null;
+  // Пока смотрят версию, холст, мини-карта и экспорт показывают её, а не доску.
+  const shown = preview?.editor ?? session.editor;
+  const openHistory = () => {
+    discussion.close();
+    viewer.reset();
+    setPanel('history');
+  };
+  const closeHistory = () => {
+    viewer.showCurrent();
+    setPanel(null);
+  };
 
   if (status === 'not-found') {
     return <NotFoundPage message="Доска не найдена. Возможно, её удалили." />;
@@ -79,32 +111,55 @@ export function BoardPage({
   return (
     <>
       <BoardView
-        editor={session.editor}
-        presence={session.presence}
-        follow={session.follow}
+        editor={shown}
+        presence={preview ? undefined : session.presence}
+        follow={preview ? undefined : session.follow}
         files={session.files}
-        overlay={
-          <CommentPins
-            editor={session.editor}
-            threads={discussion.comments.threads}
-            selectedId={discussion.open ? threadId : null}
-            draft={discussion.draft}
-            onSelect={discussion.select}
-          />
+        banner={
+          preview && (
+            <VersionBanner
+              // Название могли поменять, пока версию смотрят.
+              version={versions.find((v) => v.id === preview.version.id) ?? preview.version}
+              restoring={viewed.restoring}
+              canRestore={editable}
+              onRestore={() => void viewer.restore()}
+              onBack={() => viewer.showCurrent()}
+            />
+          )
         }
-        aside={
-          discussion.open && (
-            <CommentsPanel
-              store={session.comments}
-              comments={discussion.comments}
+        overlay={
+          !preview && (
+            <CommentPins
               editor={session.editor}
-              viewer={{ id: user.id, moderates: board.access !== null && canManage(board.access) }}
-              selectedId={threadId}
+              threads={discussion.comments.threads}
+              selectedId={discussion.open ? threadId : null}
               draft={discussion.draft}
               onSelect={discussion.select}
-              onDraftDone={discussion.dropDraft}
-              onClose={discussion.close}
             />
+          )
+        }
+        aside={
+          historyOpen ? (
+            <VersionsPanel
+              store={session.versions}
+              viewer={viewer}
+              manages={manages}
+              onClose={closeHistory}
+            />
+          ) : (
+            discussion.open && (
+              <CommentsPanel
+                store={session.comments}
+                comments={discussion.comments}
+                editor={session.editor}
+                viewer={{ id: user.id, moderates: manages }}
+                selectedId={threadId}
+                draft={discussion.draft}
+                onSelect={discussion.select}
+                onDraftDone={discussion.dropDraft}
+                onClose={discussion.close}
+              />
+            )
           )
         }
         header={
@@ -137,6 +192,17 @@ export function BoardPage({
                     <span className={styles.counter}>{discussion.openCount}</span>
                   )}
                 </button>
+                {editable && (
+                  <button
+                    type="button"
+                    className={controls.secondary}
+                    aria-pressed={historyOpen}
+                    title="Версии доски: посмотреть и восстановить"
+                    onClick={historyOpen ? closeHistory : openHistory}
+                  >
+                    История
+                  </button>
+                )}
                 <button
                   type="button"
                   className={controls.secondary}
@@ -145,7 +211,7 @@ export function BoardPage({
                 >
                   Экспорт
                 </button>
-                {board.access && canManage(board.access) && (
+                {manages && (
                   <button
                     type="button"
                     className={controls.secondary}
@@ -178,9 +244,13 @@ export function BoardPage({
       />
       {exporting && (
         <ExportDialog
-          editor={session.editor}
+          editor={shown}
           images={session.files.images}
-          boardName={board.info?.name ?? 'Доска'}
+          boardName={
+            preview
+              ? `${board.info?.name ?? 'Доска'} — версия ${versionPhrase(preview.version)}`
+              : (board.info?.name ?? 'Доска')
+          }
           onClose={() => {
             setExporting(false);
           }}
@@ -208,7 +278,7 @@ export function BoardPage({
 }
 
 interface Discussion {
-  comments: ReturnType<typeof useComments>;
+  comments: CommentsState;
   /** Открыта ли панель обсуждений. */
   open: boolean;
   openCount: number;
@@ -222,30 +292,33 @@ interface Discussion {
 
 /**
  * Обсуждения на доске: панель, открытое обсуждение и новое, которое пишут.
- * Открытое обсуждение хранится в адресе страницы (?thread=), всё остальное — здесь.
+ * Открытое обсуждение хранится в адресе страницы (?thread=), какая панель открыта — у самой
+ * страницы (panel), всё остальное — здесь.
  */
 function useDiscussion(
   session: BoardSession,
   boardId: string,
   threadId: string | null,
+  panel: Panel | null,
+  setPanel: Dispatch<SetStateAction<Panel | null>>,
 ): Discussion {
   const { editor } = session;
-  const comments = useComments(session.comments);
+  const open = panel === 'discussion';
+  const comments = useSnapshot(session.comments);
   const notifications = useNotificationStore();
-  const [open, setOpen] = useState(threadId !== null);
   const [draft, setDraft] = useState<DraftPin | null>(null);
   const [shownThread, setShownThread] = useState(threadId);
   // Обсуждение открыли переходом (по уведомлению или ссылке): панель показывает его.
   if (threadId !== shownThread) {
     setShownThread(threadId);
     if (threadId) {
-      setOpen(true);
+      setPanel('discussion');
       setDraft(null);
     }
   }
 
   const select = (id: string | null) => {
-    setOpen(true);
+    setPanel('discussion');
     setDraft(null);
     navigate(boardPath(boardId, id), { replace: true });
   };
@@ -261,9 +334,9 @@ function useDiscussion(
           y: point.y,
           element: element ? anchorAt(element, point, lookup) : null,
         });
-        setOpen(true);
+        setPanel('discussion');
       }),
-    [editor],
+    [editor, setPanel],
   );
 
   // Открытое обсуждение видно на доске: открыта его страница, а метка не за краем окна.
@@ -292,7 +365,7 @@ function useDiscussion(
   }, [notifications, open, threadId]);
 
   const close = () => {
-    setOpen(false);
+    setPanel(null);
     setDraft(null);
     if (threadId) navigate(boardPath(boardId), { replace: true });
   };
@@ -308,7 +381,7 @@ function useDiscussion(
     },
     toggle: () => {
       if (open) close();
-      else setOpen(true);
+      else setPanel('discussion');
     },
     close,
   };

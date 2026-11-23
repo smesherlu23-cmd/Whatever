@@ -1,14 +1,15 @@
 import { useId, useRef, useState } from 'react';
 import type { AppNotification } from '../api';
-import { formatWhen } from '../comments/time';
-import { useNotifications, useNotificationStore } from '../notifications/context';
+import { useNotificationStore } from '../notifications/context';
 import type { NotificationStore } from '../notifications/store';
 import { boardPath } from '../router';
 import controls from './controls.module.css';
 import { Link } from './Link';
 import styles from './NotificationBell.module.css';
+import { formatWhen } from './time';
 import { ToolIcon } from './ToolIcon';
 import { useDismiss } from './useDismiss';
+import { useSnapshot } from './useSnapshot';
 
 /** Колокольчик в шапке: упоминания и ответы в обсуждениях. Есть, пока пользователь вошёл. */
 export function NotificationBell() {
@@ -21,7 +22,7 @@ function title(notification: AppNotification): string {
 }
 
 function Bell({ store }: { store: NotificationStore }) {
-  const { unread, items, loaded } = useNotifications(store);
+  const { unread, items, loaded } = useSnapshot(store);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);

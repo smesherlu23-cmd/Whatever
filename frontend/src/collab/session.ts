@@ -8,6 +8,7 @@ import { storageKeys } from '../config';
 import { Editor } from '../editor/Editor';
 import { BoardFiles } from '../files/boardFiles';
 import { BoardDocument } from '../model/document';
+import { VersionStore } from '../versions/store';
 import { Follow } from './follow';
 import { Presence } from './presence';
 import { syncPresence } from './syncPresence';
@@ -27,6 +28,8 @@ const ACCESS_CHANGED = 4100;
  * (COMMENTS_CHANGED в app/sync/room.py). Номер не совпадает с типами самого протокола.
  */
 export const COMMENTS_CHANGED = 100;
+/** То же для истории версий доски (VERSIONS_CHANGED там же). */
+export const VERSIONS_CHANGED = 101;
 
 const isFinal = (status: ConnectionStatus) => status === 'not-found' || status === 'forbidden';
 
@@ -44,6 +47,7 @@ export class BoardSession {
   readonly follow: Follow;
   readonly files: BoardFiles;
   readonly comments: CommentStore;
+  readonly versions: VersionStore;
   private currentStatus: ConnectionStatus = 'connecting';
   private readonly listeners = new Set<() => void>();
 
@@ -56,6 +60,7 @@ export class BoardSession {
     this.follow = new Follow(this.editor, this.presence);
     this.files = new BoardFiles(boardId);
     this.comments = new CommentStore(boardId);
+    this.versions = new VersionStore(boardId);
   }
 
   get status(): ConnectionStatus {
@@ -115,14 +120,19 @@ export class BoardSession {
       this.editor.revealContent();
     };
     local.once('synced', reveal);
-    // После каждого подключения обсуждения перечитываются: без связи их изменения не доходили.
+    // После каждого подключения обсуждения и версии перечитываются: без связи их изменения
+    // не доходили.
     provider.on('sync', (synced: boolean) => {
       if (!synced) return;
       reveal();
       this.comments.refresh();
+      this.versions.changed();
     });
     provider.messageHandlers[COMMENTS_CHANGED] = () => {
       this.comments.refresh();
+    };
+    provider.messageHandlers[VERSIONS_CHANGED] = () => {
+      this.versions.changed();
     };
 
     return () => {

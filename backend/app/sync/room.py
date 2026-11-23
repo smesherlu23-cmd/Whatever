@@ -4,15 +4,16 @@
 сообщениями синхронизации (SYNC) и присутствия (AWARENESS). Изменения документа сразу
 рассылаются остальным участникам, а в PostgreSQL пишутся пачками (см. Room.save).
 Изменения от подключений без права редактирования отбрасываются (см. Room._receive_sync).
+Комната же сохраняет версии доски (см. Room._accept): она знает, кто и когда менял доску.
 """
 
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
@@ -30,18 +31,21 @@ from pycrdt import (
 )
 from sqlalchemy import delete, func, select, update
 
+from app.board_content import read_state
 from app.core.db import Sessions
-from app.models import Board, BoardUpdate
+from app.models import Board, BoardUpdate, BoardVersion
+from app.versions import save_version
 
 log = logging.getLogger(__name__)
 
 # Тип сообщения y-websocket «запросить присутствие всех участников».
 QUERY_AWARENESS = 3
 
-# Сообщение приложения поверх протокола y-websocket: «обсуждения доски изменились, перечитайте
-# их». Номер взят с запасом, чтобы не совпасть с типами самого протокола. Клиент обрабатывает
-# его своим обработчиком сообщений провайдера (src/collab/session.ts).
+# Сообщения приложения поверх протокола y-websocket: «обсуждения доски изменились, перечитайте
+# их» и то же о версиях. Номера взяты с запасом, чтобы не совпасть с типами самого протокола.
+# Клиент обрабатывает их своими обработчиками сообщений провайдера (src/collab/session.ts).
 COMMENTS_CHANGED = bytes([100])
+VERSIONS_CHANGED = bytes([101])
 
 Send = Callable[[bytes], Awaitable[None]]
 
@@ -53,23 +57,41 @@ class SavePolicy:
     Изменения за delay секунд пишутся одной строкой: перетаскивание фигуры даёт десятки
     изменений в секунду, и писать каждое по отдельности было бы расточительно. Когда записей
     истории больше compact_after, при закрытии комнаты они сжимаются в один снимок.
+
+    Версия доски сохраняется через version_interval после первого изменения, которого нет
+    в прошлой версии, и при закрытии комнаты, если с тех пор доску меняли. Автоматические
+    версии старше version_retention удаляются (см. app.versions).
     """
 
     delay: float
     compact_after: int
+    version_interval: timedelta
+    version_retention: timedelta
 
 
 class Connection:
-    """Одно подключение к комнате. Помнит id клиентов Yjs, чьё присутствие оно передавало.
+    """Одно подключение к комнате: чьё оно и может ли менять доску. Помнит id клиентов Yjs,
+    чьё присутствие оно передавало.
 
     can_edit задаётся при подключении. Когда права меняются, подключение закрывают,
     и клиент подключается заново уже с новыми правами (см. BoardSockets).
     """
 
-    def __init__(self, send: Send, *, can_edit: bool = True) -> None:
+    def __init__(self, send: Send, user_id: uuid.UUID, *, can_edit: bool = True) -> None:
         self.send = send
+        self.user_id = user_id
         self.can_edit = can_edit
         self.client_ids: set[int] = set()
+
+
+@dataclass(frozen=True)
+class _PendingVersion:
+    """Содержимое доски для версии и кто менял доску после прошлой версии."""
+
+    state: bytes
+    editors: frozenset[uuid.UUID]
+    # Есть ли в версии изменения, которых нет в прошлой.
+    changed: bool
 
 
 class Room:
@@ -91,10 +113,17 @@ class Room:
         self._received: list[bytes] = []
         self._unsaved: list[bytes] = []
         self._save_timer: asyncio.TimerHandle | None = None
-        self._saving: set[asyncio.Task[None]] = set()
+        # Записи в базу, которые идут сейчас: закрытие комнаты их дожидается.
+        self._writes: set[asyncio.Task[None]] = set()
         self._save_lock = asyncio.Lock()
         self._closed = False
         self._discarded = False
+        # Кто менял доску после прошлой версии и есть ли изменения, которых в ней нет.
+        self._editors: set[uuid.UUID] = set()
+        self._unversioned = False
+        self._version_timer: asyncio.TimerHandle | None = None
+        # Того, что на доске сейчас, нет ни в одной версии: перед первой правкой его сохраняют.
+        self._baseline_needed = False
         self.doc.observe(lambda event: self._received.append(event.update))
         self.awareness.observe(self._on_awareness)
 
@@ -109,7 +138,22 @@ class Room:
             )
             for data in rows:
                 self.doc.apply_update(data)
+            last_change = await session.scalar(
+                select(func.max(BoardUpdate.created_at)).where(
+                    BoardUpdate.board_id == self.board_id
+                )
+            )
+            last_version = await session.scalar(
+                select(func.max(BoardVersion.created_at)).where(
+                    BoardVersion.board_id == self.board_id
+                )
+            )
         self._received.clear()
+        # Содержимое записано позже последней версии: доску создали по шаблону, её версии
+        # удалены по сроку или прошлый сеанс не успел сохранить версию.
+        self._baseline_needed = last_change is not None and (
+            last_version is None or last_version < last_change
+        )
         self.loaded = True
 
     async def save(self) -> None:
@@ -141,9 +185,12 @@ class Room:
 
     def _start_save(self) -> None:
         self._save_timer = None
-        task = asyncio.create_task(self._save_or_retry())
-        self._saving.add(task)
-        task.add_done_callback(self._saving.discard)
+        self._write_soon(self._save_or_retry())
+
+    def _write_soon(self, write: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.create_task(write)
+        self._writes.add(task)
+        task.add_done_callback(self._writes.discard)
 
     async def _save_or_retry(self) -> None:
         try:
@@ -157,6 +204,7 @@ class Room:
         if self._save_timer is not None:
             self._save_timer.cancel()
             self._save_timer = None
+        self._cancel_version_timer()
 
     def discard(self) -> None:
         """Доску удалили: всё несохранённое отбрасывается, писать его уже некуда."""
@@ -165,14 +213,16 @@ class Room:
         self._unsaved.clear()
 
     async def close(self) -> None:
-        """Записывает всё несохранённое и сжимает историю доски."""
+        """Записывает всё несохранённое, сжимает историю доски и сохраняет её версию."""
         self._stop_saving()
-        await asyncio.gather(*self._saving, return_exceptions=True)
+        await asyncio.gather(*self._writes, return_exceptions=True)
         if not self.loaded or self._discarded:
             # Документ не загрузился: сохранять и сжимать нечего, а сжатие стёрло бы историю.
             return
         await self.save()
         await self.compact()
+        if self._unversioned:
+            await self._save_auto_version(self._take_version())
 
     async def compact(self) -> None:
         """Заменяет накопленные дельты одним снимком, чтобы доска открывалась быстрее."""
@@ -186,6 +236,83 @@ class Room:
             session.add(BoardUpdate(board_id=self.board_id, data=self.doc.get_update()))
             await session.commit()
             log.info("board %s compacted from %d updates", self.board_id, count)
+
+    # ---------- Версии ----------
+
+    async def save_version(self, name: str, saved_by: uuid.UUID) -> uuid.UUID:
+        """Сохраняет названную версию с тем, что сейчас на доске, и возвращает её id."""
+        pending = self._take_version()
+        try:
+            return await self._write_version(pending, name=name, saved_by=saved_by)
+        except BaseException:
+            self._give_back(pending)
+            raise
+
+    def _take_version(self) -> _PendingVersion:
+        """Забирает для версии всё, что сейчас на доске. Следующие правки войдут уже
+        в следующую версию. Без await: правки других подключений сюда не вклинятся."""
+        pending = _PendingVersion(
+            self.doc.get_update(), frozenset(self._editors), changed=self._unversioned
+        )
+        self._editors = set()
+        self._unversioned = False
+        self._baseline_needed = False
+        self._cancel_version_timer()
+        return pending
+
+    def _give_back(self, pending: _PendingVersion) -> None:
+        """Версию записать не удалось: её изменения войдут в следующую."""
+        self._editors |= pending.editors
+        if pending.changed:
+            self._mark_unversioned()
+
+    def _mark_unversioned(self) -> None:
+        if self._unversioned:
+            return
+        self._unversioned = True
+        if not self._closed:
+            loop = asyncio.get_running_loop()
+            self._version_timer = loop.call_later(
+                self.policy.version_interval.total_seconds(), self._version_due
+            )
+
+    def _cancel_version_timer(self) -> None:
+        if self._version_timer is not None:
+            self._version_timer.cancel()
+            self._version_timer = None
+
+    def _version_due(self) -> None:
+        self._version_timer = None
+        self._write_soon(self._save_auto_version(self._take_version()))
+
+    async def _save_auto_version(self, pending: _PendingVersion) -> None:
+        """Записывает автоматическую версию. Сбой не страшен: правки уже в базе, а в версию
+        они войдут в следующий раз."""
+        try:
+            await self._write_version(pending)
+        except Exception:
+            log.warning("board %s: saving a version failed", self.board_id, exc_info=True)
+            self._give_back(pending)
+
+    async def _write_version(
+        self,
+        pending: _PendingVersion,
+        *,
+        name: str | None = None,
+        saved_by: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        async with self.sessions() as session:
+            version_id = await save_version(
+                session,
+                self.board_id,
+                pending.state,
+                editors=pending.editors,
+                retention=self.policy.version_retention,
+                name=name,
+                saved_by=saved_by,
+            )
+        await self.broadcast(VERSIONS_CHANGED)
+        return version_id
 
     # ---------- Участники ----------
 
@@ -225,23 +352,38 @@ class Room:
             await self._send_awareness(conn)
 
     async def _receive_sync(self, conn: Connection, message: bytes) -> None:
-        if not conn.can_edit and message[1:2] != bytes([YSyncMessageType.SYNC_STEP1]):
-            # Шаг 1 — только запрос недостающего, а шаг 2 и обновления меняют документ.
+        # Шаг 1 — только запрос недостающего, а шаг 2 и обновления меняют документ.
+        changes = message[1:2] != bytes([YSyncMessageType.SYNC_STEP1])
+        if changes and not conn.can_edit:
             # Зрителю отвечают на запрос, но его изменения не применяются и не рассылаются.
             log.debug("board %s: dropped a change from a read-only connection", self.board_id)
             return
-        # Между применением сообщения и чтением изменений нет await,
+        before = self.doc.get_update() if changes and self._baseline_needed else None
+        # Между применением сообщения и учётом изменений нет await,
         # поэтому изменения из других подключений сюда не попадут.
         reply = handle_sync_message(message[1:], self.doc)
         updates, self._received = self._received, []
+        if updates:
+            self._accept(conn, updates, before)
         if reply is not None:
             await conn.send(reply)
-        if not updates:
-            return
-        self._unsaved.extend(updates)
-        self._schedule_save()
         for u in updates:
             await self.broadcast(create_update_message(u), exclude=conn)
+
+    def _accept(self, conn: Connection, updates: list[bytes], before: bytes | None) -> None:
+        """Учитывает принятые изменения: их запись в базу и версию, в которую они войдут.
+
+        before — содержимое доски до них, если его нет ни в одной версии: тогда оно
+        сохраняется версией, чтобы к нему можно было вернуться.
+        """
+        if before is not None:
+            self._baseline_needed = False
+            baseline = _PendingVersion(before, frozenset(), changed=False)
+            self._write_soon(self._save_auto_version(baseline))
+        self._unsaved.extend(updates)
+        self._schedule_save()
+        self._editors.add(conn.user_id)
+        self._mark_unversioned()
 
     async def _send_awareness(self, conn: Connection) -> None:
         states = list(self.awareness.states)
@@ -340,6 +482,30 @@ class RoomManager:
         entry = self._rooms.get(board_id)
         if entry is not None and entry.room.loaded:
             await entry.room.save()
+
+    async def save_version(self, board_id: uuid.UUID, name: str, saved_by: uuid.UUID) -> uuid.UUID:
+        """Сохраняет названную версию с тем, что сейчас на доске, и возвращает её id.
+
+        Если доска открыта, версия берётся из комнаты: там есть правки, которые ещё не записаны,
+        и там знают, кто менял доску после прошлой версии. Иначе — из базы.
+        """
+        closing = self._closing.get(board_id)
+        if closing is not None:
+            await asyncio.gather(asyncio.shield(closing), return_exceptions=True)
+        entry = self._rooms.get(board_id)
+        if entry is not None and entry.room.loaded:
+            return await entry.room.save_version(name, saved_by)
+        async with self._sessions() as session:
+            state = await read_state(session, board_id)
+            return await save_version(
+                session,
+                board_id,
+                state,
+                editors=(),
+                retention=self._policy.version_retention,
+                name=name,
+                saved_by=saved_by,
+            )
 
     async def broadcast(self, board_id: uuid.UUID, message: bytes) -> None:
         """Отправляет сообщение всем, у кого открыта доска. Если её никто не открыл, ничего

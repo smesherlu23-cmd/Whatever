@@ -186,6 +186,47 @@ class BoardFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class BoardVersion(Base):
+    """Версия доски: всё её содержимое в какой-то момент, одним обновлением Yjs.
+
+    Автоматические версии (без названия) комната доски сохраняет сама, пока доску меняют,
+    и удаляет, когда они старше срока хранения. Названные версии сохраняют люди, и хранятся они,
+    пока их не удалят.
+    """
+
+    __tablename__ = "board_versions"
+    __table_args__ = (Index("ix_board_versions_board_created", "board_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    board_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("boards.id", ondelete="CASCADE"))
+    name: Mapped[str | None] = mapped_column(String(200))
+    # Содержимое большое, а список версий его не показывает: читается только явно.
+    state: Mapped[bytes] = mapped_column(LargeBinary, deferred=True, deferred_raiseload=True)
+    # Время базы, как у board_updates: по нему видно, есть ли правки новее последней версии.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Кто сохранил версию вручную. У автоматических версий его нет.
+    saved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+
+    saved_by: Mapped[User | None] = relationship(lazy="raise")
+    # Кто менял доску после предыдущей версии.
+    editors: Mapped[list[User]] = relationship(
+        secondary="board_version_editors", lazy="raise", order_by="User.name", viewonly=True
+    )
+
+
+class BoardVersionEditor(Base):
+    __tablename__ = "board_version_editors"
+
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("board_versions.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
 class CommentThread(Base):
     """Обсуждение на доске: метка на странице и комментарии к ней по порядку.
 

@@ -1,4 +1,5 @@
 import { type CommentThread, type NewThread, type Person, api } from '../api';
+import { Reloader } from '../collab/reloader';
 
 export type CommentsStatus = 'loading' | 'ready' | 'failed';
 
@@ -11,23 +12,25 @@ export interface CommentsState {
 
 /**
  * Обсуждения открытой доски. Хранятся на сервере, а не в документе доски, поэтому без связи
- * их не прочитать и не написать.
- *
- * Сервер не присылает изменения, а сообщает, что они были (session.ts), и список перечитывается
- * целиком: так он всегда совпадает с сервером, сколько бы сообщений ни потерялось без связи.
- * Свою правку пользователь видит сразу, по ответу сервера. Ответ на перечитывание, начатое до
- * неё, отбрасывается: в нём правки ещё нет, и она бы мелькнула и пропала.
+ * их не прочитать и не написать. Список перечитывается целиком (см. Reloader), а свою правку
+ * пользователь видит сразу, по ответу сервера.
  */
 export class CommentStore {
   private state: CommentsState = { threads: [], status: 'loading' };
   private readonly listeners = new Set<() => void>();
-  private loading = false;
-  private reloadAfter = false;
-  /** Растёт с каждой своей правкой: по нему видно, что ответ на перечитывание устарел. */
-  private edits = 0;
+  private readonly reloader: Reloader<CommentThread[]>;
   private peopleRequest: Promise<Person[]> | null = null;
 
-  constructor(private readonly boardId: string) {}
+  constructor(private readonly boardId: string) {
+    this.reloader = new Reloader(() => api.listThreads(boardId), {
+      loaded: (threads) => {
+        this.set({ threads, status: 'ready' });
+      },
+      failed: () => {
+        if (this.state.status === 'loading') this.set({ ...this.state, status: 'failed' });
+      },
+    });
+  }
 
   get snapshot(): CommentsState {
     return this.state;
@@ -40,32 +43,9 @@ export class CommentStore {
     };
   }
 
-  /** Перечитывает обсуждения. Вызовы во время загрузки сливаются в одно повторное чтение. */
+  /** Перечитывает обсуждения. */
   refresh(): void {
-    if (this.loading) {
-      this.reloadAfter = true;
-      return;
-    }
-    this.loading = true;
-    const edits = this.edits;
-    api.listThreads(this.boardId).then(
-      (threads) => {
-        if (edits === this.edits) this.set({ threads, status: 'ready' });
-        else this.reloadAfter = true;
-        this.loaded();
-      },
-      () => {
-        if (this.state.status === 'loading') this.set({ ...this.state, status: 'failed' });
-        this.loaded();
-      },
-    );
-  }
-
-  private loaded(): void {
-    this.loading = false;
-    if (!this.reloadAfter) return;
-    this.reloadAfter = false;
-    this.refresh();
+    this.reloader.reload();
   }
 
   /** Начинает обсуждение. Возвращает его, чтобы сразу открыть. */
@@ -121,7 +101,7 @@ export class CommentStore {
   }
 
   private change(threads: readonly CommentThread[]): void {
-    this.edits += 1;
+    this.reloader.edited();
     const complete = this.state.status === 'ready';
     this.set({ threads, status: 'ready' });
     // Список ещё не загружался: правка видна сразу, а остальное придёт следом.

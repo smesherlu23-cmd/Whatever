@@ -7,6 +7,20 @@ import { parseElement, parsePage } from './validate';
 
 type FieldMap = Y.Map<unknown>;
 
+/**
+ * Записи документа — Y.Map с полями. Другой клиент мог записать вместо неё что угодно,
+ * поэтому каждая запись проверяется, прежде чем её читать или менять.
+ */
+function isFieldMap(value: unknown): value is FieldMap {
+  return value instanceof Y.Map;
+}
+
+/** Поля записи key, если это Y.Map. */
+function fieldsAt(map: Y.Map<unknown>, key: string): FieldMap | undefined {
+  const value = map.get(key);
+  return isFieldMap(value) ? value : undefined;
+}
+
 /** Происхождение локальных правок: только их отменяет Ctrl+Z, чужие правки не трогаются. */
 const LOCAL = Symbol('local-edit');
 
@@ -65,6 +79,46 @@ function rawPage(map: FieldMap): string {
   return typeof page === 'string' ? page : DEFAULT_PAGE;
 }
 
+/** Равны ли два значения из JSON: числа, строки, списки и объекты из них. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const left = Object.entries(a);
+  const right = new Map<string, unknown>(Object.entries(b));
+  return (
+    left.length === right.size &&
+    left.every(([key, value]) => right.has(key) && sameValue(value, right.get(key)))
+  );
+}
+
+/**
+ * Делает to таким же, как from: удаляет лишние записи и поля, добавляет недостающие и меняет
+ * отличающиеся. Совпадающее не трогается, поэтому правка выходит такой маленькой, как можно.
+ */
+function copyMaps(from: Y.Map<unknown>, to: Y.Map<unknown>): void {
+  for (const key of [...to.keys()]) {
+    if (!isFieldMap(from.get(key))) to.delete(key);
+  }
+  from.forEach((source, key) => {
+    // Битые записи версии не переносим: их уже удалили из текущей доски выше.
+    if (!isFieldMap(source)) return;
+    const fields = Object.entries(source.toJSON());
+    const target = fieldsAt(to, key);
+    if (!target) {
+      to.set(key, new Y.Map<unknown>(fields));
+      return;
+    }
+    const wanted = new Map<string, unknown>(fields);
+    for (const field of [...target.keys()]) {
+      if (!wanted.has(field)) target.delete(field);
+    }
+    for (const [field, value] of wanted) {
+      if (!sameValue(target.get(field), value)) target.set(field, value);
+    }
+  });
+}
+
 /**
  * Документ доски поверх Yjs. Каждый элемент хранится в своём Y.Map внутри общего
  * Y.Map("elements"), поэтому правки разных полей одного элемента от разных людей сливаются
@@ -75,8 +129,8 @@ function rawPage(map: FieldMap): string {
  */
 export class BoardDocument {
   readonly doc: Y.Doc;
-  private readonly elements: Y.Map<FieldMap>;
-  private readonly pageMaps: Y.Map<FieldMap>;
+  private readonly elements: Y.Map<unknown>;
+  private readonly pageMaps: Y.Map<unknown>;
   private readonly undoManager: Y.UndoManager;
   private snapshotCache: Snapshot | null = null;
   private pagesCache: readonly Page[] | null = null;
@@ -84,8 +138,8 @@ export class BoardDocument {
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
-    this.elements = doc.getMap<FieldMap>('elements');
-    this.pageMaps = doc.getMap<FieldMap>('pages');
+    this.elements = doc.getMap<unknown>('elements');
+    this.pageMaps = doc.getMap<unknown>('pages');
     // Регистрируются первыми, чтобы остальные подписчики уже видели свежие снимки.
     this.elements.observeDeep(() => {
       this.snapshotCache = null;
@@ -104,6 +158,7 @@ export class BoardDocument {
       const byId = new Map<string, BoardElement>();
       this.elements.forEach((map) => {
         // Элемент мог прийти от другого клиента: битые данные пропускаем, а не рисуем.
+        if (!isFieldMap(map)) return;
         const element = parseElement(map.toJSON());
         if (element) byId.set(element.id, Object.freeze(element));
       });
@@ -176,7 +231,7 @@ export class BoardDocument {
   }
 
   update(id: string, patch: Partial<BoardElement>): void {
-    const map = this.elements.get(id);
+    const map = fieldsAt(this.elements, id);
     if (!map) return;
     this.transact(() => {
       for (const [key, value] of Object.entries(patch)) {
@@ -198,7 +253,7 @@ export class BoardDocument {
         for (const which of ['start', 'end'] as const) {
           const end: ArrowEnd = arrow[which];
           if (end.shapeId && removed.has(end.shapeId)) {
-            this.elements.get(arrow.id)?.set(which, { x: end.x, y: end.y });
+            fieldsAt(this.elements, arrow.id)?.set(which, { x: end.x, y: end.y });
           }
         }
       }
@@ -213,6 +268,7 @@ export class BoardDocument {
     if (!this.pagesCache) {
       const pages: Page[] = [];
       this.pageMaps.forEach((map, id) => {
+        if (!isFieldMap(map)) return;
         const page = parsePage(id, map.toJSON());
         if (page) pages.push(Object.freeze(page));
       });
@@ -231,7 +287,7 @@ export class BoardDocument {
    */
   private materializePages(): void {
     for (const page of this.pages()) {
-      if (this.pageMaps.has(page.id)) continue;
+      if (isFieldMap(this.pageMaps.get(page.id))) continue;
       this.pageMaps.set(page.id, fieldMap({ name: page.name, order: page.order }));
     }
   }
@@ -251,7 +307,7 @@ export class BoardDocument {
     if (!this.hasPage(id)) return;
     this.transact(() => {
       this.materializePages();
-      this.pageMaps.get(id)?.set('name', name);
+      fieldsAt(this.pageMaps, id)?.set('name', name);
     });
   }
 
@@ -282,10 +338,12 @@ export class BoardDocument {
     else {
       const ordered = others.map((page) => page.id);
       ordered.splice(index, 0, id);
-      ordered.forEach((pageId, position) => this.pageMaps.get(pageId)?.set('order', position));
+      ordered.forEach((pageId, position) =>
+        fieldsAt(this.pageMaps, pageId)?.set('order', position),
+      );
       return;
     }
-    this.pageMaps.get(id)?.set('order', order);
+    fieldsAt(this.pageMaps, id)?.set('order', order);
   }
 
   /**
@@ -297,7 +355,7 @@ export class BoardDocument {
     if (this.pages().length <= 1 || !this.hasPage(id)) return false;
     const elements: string[] = [];
     this.elements.forEach((map, key) => {
-      if (rawPage(map) === id) elements.push(key);
+      if (isFieldMap(map) && rawPage(map) === id) elements.push(key);
     });
     this.transact(() => {
       this.materializePages();
@@ -329,6 +387,22 @@ export class BoardDocument {
       this.snapshotCache = null;
     });
     return copyId;
+  }
+
+  // ---------- Версии ----------
+
+  /**
+   * Делает доску такой, как в version: те же страницы и элементы с теми же полями.
+   * Это одна правка: её отменяет Ctrl+Z, а участники получают её как обычное изменение.
+   */
+  restoreFrom(version: BoardDocument): void {
+    this.stopCapturing();
+    this.transact(() => {
+      copyMaps(version.elements, this.elements);
+      copyMaps(version.pageMaps, this.pageMaps);
+      this.snapshotCache = null;
+    });
+    this.stopCapturing();
   }
 
   // ---------- Отмена и подписка ----------

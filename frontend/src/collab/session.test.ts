@@ -6,7 +6,7 @@ import { stubServer } from '../testing/server';
 import { BoardDocument } from '../model/document';
 import { contains } from '../model/geometry';
 import { DEFAULT_FILL, DEFAULT_STROKE, type ShapeElement } from '../model/types';
-import { BoardSession, COMMENTS_CHANGED } from './session';
+import { BoardSession, COMMENTS_CHANGED, VERSIONS_CHANGED } from './session';
 
 function note(id: string, x: number, y: number): ShapeElement {
   return {
@@ -169,6 +169,25 @@ describe('BoardSession', () => {
 
     FakeSocket.last().receive(new Uint8Array([COMMENTS_CHANGED]));
     expect(fetch).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it('reloads the open history of versions when the server says it changed', async () => {
+    const fetch = stubServer(() => Response.json([]));
+    const session = new BoardSession('board-1', 'Анна');
+    const stop = session.start();
+    FakeSocket.last().open();
+    FakeSocket.last().receive(new Uint8Array([VERSIONS_CHANGED]));
+    expect(fetch).not.toHaveBeenCalled();
+
+    const unwatch = session.versions.watch();
+    await vi.waitFor(() => {
+      expect(session.versions.snapshot.status).toBe('ready');
+    });
+    FakeSocket.last().receive(new Uint8Array([VERSIONS_CHANGED]));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenLastCalledWith('/api/boards/board-1/versions', expect.anything());
+    unwatch();
     stop();
   });
 

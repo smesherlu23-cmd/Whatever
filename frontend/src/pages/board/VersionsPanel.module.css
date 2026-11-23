@@ -1,0 +1,140 @@
+.section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+
+.save {
+  align-self: flex-start;
+}
+
+.nameForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.item .nameForm {
+  padding: 0 10px 10px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* Чем кончилось действие: версия восстановлена или что-то не удалось. */
+.message {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 4px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+  font-size: 13px;
+}
+
+.message span {
+  flex: 1;
+  padding-top: 5px;
+}
+
+.message[role='alert'] {
+  color: var(--danger);
+}
+
+.namedOnly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.versions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+/* Открытая версия: её видно вместо доски. */
+.item:has(> [aria-current='true']) {
+  border-color: var(--border);
+  background: var(--bg-hover);
+  box-shadow: inset 3px 0 0 var(--bg-active);
+}
+
+.version {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 10px 10px 13px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.version:hover {
+  background: var(--bg-hover);
+}
+
+.version:focus-visible {
+  outline: 2px solid var(--selection);
+}
+
+.title,
+.name {
+  font-weight: 600;
+}
+
+.name {
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 4px 6px;
+}
+
+.itemError {
+  padding: 0 10px 10px 13px;
+  font-size: 13px;
+}
+
+.empty,
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.empty[role='alert'] {
+  color: var(--danger);
+}

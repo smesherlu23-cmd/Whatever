@@ -21,7 +21,7 @@ import styles from './pages.module.css';
 
 /**
  * Холст с панелью инструментов. Шапку страницы целиком передаёт родитель, как и слой поверх
- * холста (метки обсуждений) и боковую панель.
+ * холста (метки обсуждений), боковую панель и плашку, которая заменяет панель инструментов.
  * Пока пользователь следует за участником, доска обведена цветом участника, а любое
  * нажатие на ней прекращает следование: пользователь взялся за доску сам.
  */
@@ -31,6 +31,7 @@ export function BoardView({
   follow,
   files,
   header,
+  banner,
   overlay,
   aside,
 }: {
@@ -39,6 +40,8 @@ export function BoardView({
   follow?: Follow;
   files: BoardFiles;
   header: ReactNode;
+  /** Вместо панели инструментов, например пока видна версия доски. */
+  banner?: ReactNode;
   /** Поверх холста, под панелями управления. */
   overlay?: ReactNode;
   /** Справа от холста. Холст становится уже. */
@@ -74,35 +77,36 @@ export function BoardView({
             <TextEditor key={state.editingId} editor={editor} id={state.editingId} />
           )}
           <div className={styles.toolbar}>
-            {state.readOnly ? (
-              <div className={styles.viewerBar}>
-                <IconButton
-                  icon={COMMENT_TOOL.id}
-                  label={COMMENT_TOOL.label}
-                  shortcut={COMMENT_TOOL.key}
-                  pressed={state.tool === COMMENT_TOOL.id}
-                  onClick={() => editor.setTool('comment')}
+            {banner ??
+              (state.readOnly ? (
+                <div className={styles.viewerBar}>
+                  <IconButton
+                    icon={COMMENT_TOOL.id}
+                    label={COMMENT_TOOL.label}
+                    shortcut={COMMENT_TOOL.key}
+                    pressed={state.tool === COMMENT_TOOL.id}
+                    onClick={() => editor.setTool('comment')}
+                  />
+                  <p className={styles.readOnly} role="status">
+                    Только просмотр
+                  </p>
+                </div>
+              ) : (
+                <Toolbar
+                  tool={state.tool}
+                  onChange={(tool) => editor.setTool(tool)}
+                  smartDrawing={state.smartDrawing}
+                  onSmartDrawingChange={(enabled) => editor.setSmartDrawing(enabled)}
+                  arrowStyle={state.arrowStyle}
+                  selectionArrowStyle={state.selectionArrowStyle}
+                  onArrowStyleChange={(patch) => editor.setArrowStyle(patch)}
+                  shapesOpen={shapesOpen}
+                  onShapesToggle={() => setShapesOpen(!shapesOpen)}
+                  onInsertFile={() => picker.current?.click()}
+                  onUndo={() => editor.undo()}
+                  onRedo={() => editor.redo()}
                 />
-                <p className={styles.readOnly} role="status">
-                  Только просмотр
-                </p>
-              </div>
-            ) : (
-              <Toolbar
-                tool={state.tool}
-                onChange={(tool) => editor.setTool(tool)}
-                smartDrawing={state.smartDrawing}
-                onSmartDrawingChange={(enabled) => editor.setSmartDrawing(enabled)}
-                arrowStyle={state.arrowStyle}
-                selectionArrowStyle={state.selectionArrowStyle}
-                onArrowStyleChange={(patch) => editor.setArrowStyle(patch)}
-                shapesOpen={shapesOpen}
-                onShapesToggle={() => setShapesOpen(!shapesOpen)}
-                onInsertFile={() => picker.current?.click()}
-                onUndo={() => editor.undo()}
-                onRedo={() => editor.redo()}
-              />
-            )}
+              ))}
           </div>
           <input
             ref={picker}

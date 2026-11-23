@@ -6,10 +6,13 @@ import { NotificationsContext } from '../notifications/context';
 import { NotificationStore } from '../notifications/store';
 import { parseRoute, useLocation } from '../router';
 import { MEMBER, signedIn, withAuth } from '../testing/auth';
+import { BoardDocument } from '../model/document';
 import { enableCanvas } from '../testing/canvas';
 import { ANNA, IVAN, comment, notification, thread } from '../testing/comments';
 import { FakeSocket } from '../testing/fakeSocket';
 import { failure, stubServer } from '../testing/server';
+import { version } from '../testing/versions';
+import { formatMoment } from '../ui/time';
 import { rememberAccess } from './boardAccessCache';
 import { BoardPage } from './BoardPage';
 
@@ -309,3 +312,125 @@ describe('BoardPage discussions', () => {
     );
   });
 });
+
+describe('BoardPage history', () => {
+  const BACKUP = 'v-backup';
+
+  /** Доска со страницами pages после первой, как её хранит сервер или версия. */
+  function boardWith(...pages: string[]): Uint8Array<ArrayBuffer> {
+    const doc = new BoardDocument();
+    for (const name of pages) doc.addPage(name);
+    return Uint8Array.from(Y.encodeStateAsUpdate(doc.doc));
+  }
+
+  const MORNING = version('v-morning', new Date(2026, 10, 23, 9, 0).toISOString());
+
+  function serve(access: Access) {
+    return stubServer((method, path, body) => {
+      if (path === '/boards/b1/versions') {
+        if (method === 'GET') return Response.json([MORNING]);
+        const { name } = body as { name: string };
+        return Response.json(version(BACKUP, new Date().toISOString(), { name }), { status: 201 });
+      }
+      if (path === `/versions/${MORNING.id}/state`) return new Response(boardWith('Черновик'));
+      if (path === '/boards/b1/threads') return Response.json([]);
+      return Response.json(board(access));
+    });
+  }
+
+  /** Доска открыта и синхронизирована: на ней две страницы. */
+  async function openSynced(access: Access) {
+    const fetch = serve(access);
+    render(withAuth(<BoardPage boardId="b1" />, asMember));
+    const update = boardWith('Схема сети');
+    act(() => {
+      FakeSocket.last().open();
+      FakeSocket.last().receive(new Uint8Array([0, 1, ...varUint(update.length), ...update]));
+    });
+    await screen.findByDisplayValue('Схема');
+    return fetch;
+  }
+
+  const pages = () =>
+    within(screen.getByRole('navigation', { name: 'Страницы доски' }))
+      .getAllByRole('listitem')
+      .map((tab) => tab.textContent);
+  const addPage = () => screen.queryByRole('button', { name: 'Добавить страницу' });
+  const historyButton = () => screen.getByRole('button', { name: 'История' });
+
+  beforeEach(() => {
+    FakeSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeSocket);
+    enableCanvas();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it('shows a version instead of the board and comes back to the board', async () => {
+    await openSynced('edit');
+    expect(pages()).toEqual(['Страница 1', 'Схема сети']);
+    fireEvent.click(screen.getByRole('button', { name: /^Обсуждения/ }));
+    fireEvent.click(historyButton());
+    expect(screen.queryByRole('complementary', { name: 'Обсуждения' })).toBeNull();
+    expect(historyButton().getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: new RegExp(formatMoment(MORNING.created_at)) }),
+    );
+    const banner = await screen.findByRole('region', { name: 'Просмотр версии' });
+    expect(banner.textContent).toContain(formatMoment(MORNING.created_at));
+    expect(pages()).toEqual(['Страница 1', 'Черновик']);
+    expect(addPage()).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Прямоугольник' })).toBeNull();
+
+    fireEvent.click(within(banner).getByRole('button', { name: 'Вернуться к текущей' }));
+    expect(screen.queryByRole('region', { name: 'Просмотр версии' })).toBeNull();
+    expect(pages()).toEqual(['Страница 1', 'Схема сети']);
+    expect(addPage()).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Прямоугольник' })).toBeTruthy();
+
+    fireEvent.click(historyButton());
+    expect(screen.queryByRole('complementary', { name: 'История версий' })).toBeNull();
+  });
+
+  it('restores a version after saving the board as it was', async () => {
+    const fetch = await openSynced('manage');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(historyButton());
+    fireEvent.click(
+      await screen.findByRole('button', { name: new RegExp(formatMoment(MORNING.created_at)) }),
+    );
+    const banner = await screen.findByRole('region', { name: 'Просмотр версии' });
+
+    fireEvent.click(within(banner).getByRole('button', { name: 'Восстановить' }));
+    const backup = 'Перед восстановлением версии от 23 ноября 2026 г. в 09:00';
+    expect(await screen.findByText(new RegExp(`сохранено в истории как «${backup}»`))).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/boards/b1/versions',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: backup }) }),
+    );
+    expect(screen.queryByRole('region', { name: 'Просмотр версии' })).toBeNull();
+    expect(pages()).toEqual(['Страница 1', 'Черновик']);
+    expect(addPage()).toBeTruthy();
+  });
+
+  it('is not offered to those who can only view the board', async () => {
+    await openSynced('view');
+    expect(screen.queryByRole('button', { name: 'История' })).toBeNull();
+  });
+});
+
+/** Длина в начале сообщения y-websocket: число байтами по 7 бит, как в lib0. */
+function varUint(value: number): number[] {
+  const bytes: number[] = [];
+  let rest = value;
+  while (rest > 0x7f) {
+    bytes.push((rest & 0x7f) | 0x80);
+    rest >>>= 7;
+  }
+  bytes.push(rest);
+  return bytes;
+}
