@@ -23,6 +23,11 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
+# Исправления безопасности Debian, вышедшие после сборки базового образа: Trivy в CI
+# не пропускает уязвимость, для которой исправление уже есть.
+RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 whatever \
     && useradd --system --uid 10001 --gid whatever --no-create-home --shell /usr/sbin/nologin whatever
 WORKDIR /app
