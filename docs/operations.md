@@ -201,6 +201,38 @@ curl -s http://localhost:8080/api/health    # 200 — всё в порядке, 
 (Loki, ELK, Vector) включите `WHATEVER_LOG_FORMAT=json`: каждая запись станет одной строкой
 JSON с временем в UTC. Успешные проверки здоровья в журнал доступа не пишутся.
 
+У каждого запроса есть id: nginx передаёт его бэкенду, бэкенд пишет его в каждую запись
+журнала, сделанную во время запроса (`[3f2a…]` в тексте, поле `request_id` в JSON),
+и возвращает в заголовке ответа `X-Request-ID`. Если пользователь сообщил об ошибке и
+прислал этот заголовок из инструментов разработчика, запрос находится одной командой:
+`docker compose logs backend | grep <id>`.
+
+### Показатели для Prometheus
+
+Бэкенд отдаёт показатели в формате Prometheus на `/api/metrics`, если в `.env` задан
+токен `WHATEVER_METRICS_TOKEN` (без него адрес отвечает 404):
+
+```yaml
+scrape_configs:
+  - job_name: whatever
+    scheme: https
+    authorization:
+      credentials: <WHATEVER_METRICS_TOKEN>
+    static_configs:
+      - targets: ["whatever.example.local"]
+    metrics_path: /api/metrics
+```
+
+| Показатель | Что значит |
+| --- | --- |
+| `whatever_rooms_open`, `whatever_connections` | открытые доски и подключения к ним |
+| `whatever_http_request_duration_seconds` | время ответа API по методу, шаблону пути и коду |
+| `whatever_board_saves_total{result}`, `whatever_board_save_duration_seconds` | записи изменений досок в базу и их время; рост `result="error"` — проблемы с базой |
+| `whatever_board_compactions_total` | сжатия истории досок |
+| `whatever_slow_client_disconnects_total` | участники, отключённые за отставание |
+| `whatever_presence_dropped_total` | отброшенные сообщения присутствия (слишком частые или большие) |
+| `process_*`, `python_gc_*` | память, процессор и сборка мусора процесса бэкенда |
+
 ## Смена пароля базы
 
 ```bash
