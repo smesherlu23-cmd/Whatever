@@ -4,6 +4,7 @@ import { Editor } from '../editor/Editor';
 import { DEFAULT_FILL, DEFAULT_STROKE, type FileRef, type Point } from '../model/types';
 import { enableCanvas } from '../testing/canvas';
 import { shapes } from '../testing/helpers';
+import { Dialog } from '../ui/Dialog';
 import { Board } from './Board';
 
 describe('Board', () => {
@@ -43,6 +44,34 @@ describe('Board', () => {
 
     fireEvent.keyDown(screen.getByLabelText('Поле'), { key: 'o', code: 'KeyO' });
     expect(editor.tool).toBe('rectangle');
+  });
+
+  it('leaves keys and pasted files to an open dialog', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    const onInsertFiles = vi.fn<(files: File[], at: Point) => void>();
+    render(
+      <>
+        <Board editor={editor} onInsertFiles={onInsertFiles} />
+        <Dialog title="Экспорт" onClose={vi.fn()}>
+          <button type="button">Скачать</button>
+        </Dialog>
+      </>,
+    );
+    const button = screen.getByRole('button', { name: 'Скачать' });
+
+    // Esc и пробел браузер отдаёт окну: окно закрывается, кнопка нажимается.
+    expect(fireEvent.keyDown(button, { key: 'Escape', code: 'Escape' })).toBe(true);
+    expect(fireEvent.keyDown(button, { key: ' ', code: 'Space' })).toBe(true);
+    expect(editor.spaceHeld).toBe(false);
+    fireEvent.keyDown(document.body, { key: 'o', code: 'KeyO' });
+    expect(editor.tool).toBe('rectangle');
+    fireEvent.paste(window, { clipboardData: { files: [new File(['x'], 'снимок.png')] } });
+    expect(onInsertFiles).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    expect(editor.tool).toBe('select');
   });
 
   it('takes files dropped on the canvas or pasted, and opens attachments', () => {

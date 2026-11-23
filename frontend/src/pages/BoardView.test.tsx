@@ -8,6 +8,7 @@ import { BoardDocument } from '../model/document';
 import { enableCanvas } from '../testing/canvas';
 import { deferred, defined, shapes } from '../testing/helpers';
 import { participant, relay } from '../testing/peers';
+import { Dialog } from '../ui/Dialog';
 import { BoardView } from './BoardView';
 
 describe('BoardView text editing', () => {
@@ -112,6 +113,15 @@ describe('BoardView text editing', () => {
 
     start();
     expect(editor.camera.zoom).toBe(0.5);
+    // Esc в открытом окне закрывает только окно.
+    const dialog = render(
+      <Dialog title="Экспорт" onClose={vi.fn()}>
+        <button type="button">Скачать</button>
+      </Dialog>,
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Скачать' }), { key: 'Escape' });
+    expect(notice()).not.toBeNull();
+    dialog.unmount();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(notice()).toBeNull();
 

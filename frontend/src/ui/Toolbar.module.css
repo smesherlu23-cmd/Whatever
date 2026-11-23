@@ -106,7 +106,3 @@
   white-space: nowrap;
   cursor: pointer;
 }
-
-.switch input {
-  accent-color: var(--bg-active);
-}

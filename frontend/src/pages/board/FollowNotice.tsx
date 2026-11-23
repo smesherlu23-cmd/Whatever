@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent } from 'react';
 import type { Leader } from '../../collab/follow';
+import { modalDialogOpen } from '../../ui/modal';
 import styles from '../pages.module.css';
 
 /** Сообщение, за кем следуют. Следование прекращают кнопкой или клавишей Esc. */
@@ -7,7 +8,8 @@ export function FollowNotice({ leader, onStop }: { leader: Leader; onStop: () =>
   const stop = useEffectEvent(onStop);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') stop();
+      // Esc в открытом окне закрывает окно, а следование продолжается.
+      if (e.key === 'Escape' && !modalDialogOpen()) stop();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
