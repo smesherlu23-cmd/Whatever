@@ -194,3 +194,41 @@ async def test_discarded_room_does_not_write_to_a_deleted_board(sessions: Sessio
         # на внешнем ключе удалённой доски.
         rooms.discard(board_id)
     assert rooms.open_rooms() == 0
+
+
+async def test_flush_writes_accepted_changes_at_once(sessions: Sessions) -> None:
+    board_id = await new_board(sessions)
+    # Без flush комната записала бы изменения только через минуту.
+    rooms = RoomManager(sessions, SavePolicy(delay=60, compact_after=COMPACT_AFTER))
+    await rooms.flush(board_id)
+    async with rooms.connect(board_id, Connection(Recorder().send)) as room:
+        conn = next(iter(room.connections))
+        await room.receive(conn, create_update_message(Editor().set("shape", 1)))
+        assert await stored_updates(sessions, board_id) == 0
+        await rooms.flush(board_id)
+        assert await stored_updates(sessions, board_id) == 1
+        assert await restored(sessions, board_id) == {"shape": 1}
+
+
+async def test_flush_waits_for_a_closing_room(
+    sessions: Sessions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board_id = await new_board(sessions)
+    rooms = RoomManager(sessions, SavePolicy(delay=60, compact_after=COMPACT_AFTER))
+    connection = rooms.connect(board_id, Connection(Recorder().send))
+    room = await connection.__aenter__()
+    await room.receive(next(iter(room.connections)), create_update_message(Editor().set("a", 1)))
+    closing = asyncio.Event()
+    close = room.close
+
+    async def close_later() -> None:
+        closing.set()
+        await close()
+
+    monkeypatch.setattr(room, "close", close_later)
+    leaving = asyncio.create_task(connection.__aexit__(None, None, None))
+    await closing.wait()
+    # Комната уже закрывается и сама дописывает изменения: flush дожидается этого.
+    await rooms.flush(board_id)
+    assert await restored(sessions, board_id) == {"a": 1}
+    await leaving

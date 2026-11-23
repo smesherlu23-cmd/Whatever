@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Access, BoardInfo } from '../api';
 import { MEMBER, signedIn, withAuth } from '../testing/auth';
@@ -9,13 +9,14 @@ import { BoardPage } from './BoardPage';
 
 vi.mock('y-indexeddb', () => import('../testing/fakeSocket').then((m) => m.indexeddbStub));
 
-function board(access: Access): BoardInfo {
+function board(access: Access, isTemplate = false): BoardInfo {
   return {
     id: 'b1',
     name: 'Схема',
     owner: { id: 'u-owner', login: 'owner', name: 'Ольга' },
     folder_id: null,
     access,
+    is_template: isTemplate,
     created_at: '',
     updated_at: '',
   };
@@ -63,6 +64,7 @@ describe('BoardPage', () => {
     expect(await screen.findByDisplayValue('Схема')).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Прямоугольник' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Поделиться' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Создать доску по шаблону' })).toBeNull();
   });
 
   it('renames the board on Enter and ignores an empty name', async () => {
@@ -112,6 +114,29 @@ describe('BoardPage', () => {
     expect(await screen.findByRole('dialog', { name: 'Доступ к доске «Схема»' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('marks a company template and creates a board from it', async () => {
+    const fetch = stubServer((method, path) => {
+      if (path.endsWith('/content')) return new Response(new Uint8Array([0, 0]));
+      if (method === 'POST') return Response.json({ ...board('manage'), id: 'b-new' });
+      return Response.json(board('view', true));
+    });
+    openBoard();
+    expect(await screen.findByText('Шаблон')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Создать доску по шаблону' }));
+    const dialog = screen.getByRole('dialog', { name: 'Доска по шаблону «Схема»' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Создать' }));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/b/b-new');
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/boards',
+      expect.objectContaining({
+        body: JSON.stringify({ name: 'Схема', folder_id: null, template_id: 'b1' }),
+      }),
+    );
+    window.history.pushState(null, '', '/');
   });
 
   it('explains when access was not given or was revoked', async () => {

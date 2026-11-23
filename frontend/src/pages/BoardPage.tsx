@@ -7,6 +7,7 @@ import { AppHeader } from './AppHeader';
 import { forgetAccess, rememberAccess, rememberedAccess } from './boardAccessCache';
 import { ExportDialog } from './board/ExportDialog';
 import { Participants } from './board/Participants';
+import { FromTemplateDialog } from './boards/NewBoardDialog';
 import { BoardView } from './BoardView';
 import { NotFoundPage } from './NotFoundPage';
 import styles from './pages.module.css';
@@ -28,6 +29,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const [status, setStatus] = useState<ConnectionStatus>(session.status);
   const [sharing, setSharing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [copying, setCopying] = useState(false);
   const board = useBoardInfo(boardId, user.id, status === 'connected');
 
   useEffect(() => {
@@ -72,6 +74,15 @@ export function BoardPage({ boardId }: { boardId: string }) {
                   presence={session.presence}
                   follow={session.follow}
                 />
+                {board.info?.is_template && (
+                  <button
+                    type="button"
+                    className={controls.primary}
+                    onClick={() => setCopying(true)}
+                  >
+                    Создать доску по шаблону
+                  </button>
+                )}
                 <button
                   type="button"
                   className={controls.secondary}
@@ -100,6 +111,11 @@ export function BoardPage({ boardId }: { boardId: string }) {
               editable={editable}
               onRenamed={board.update}
             />
+            {board.info?.is_template && (
+              <span className={styles.badge} title="Шаблон видят все сотрудники">
+                Шаблон
+              </span>
+            )}
             <span className={styles.status} data-status={status}>
               {STATUS_TEXT[status]}
             </span>
@@ -113,6 +129,14 @@ export function BoardPage({ boardId }: { boardId: string }) {
           boardName={board.info?.name ?? 'Доска'}
           onClose={() => {
             setExporting(false);
+          }}
+        />
+      )}
+      {copying && board.info && (
+        <FromTemplateDialog
+          template={board.info}
+          onClose={() => {
+            setCopying(false);
           }}
         />
       )}

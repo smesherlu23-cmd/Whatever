@@ -14,6 +14,11 @@ export const SMALL_LINE_HEIGHT = 18;
 /** Поля секции класса сверху и снизу. */
 export const SECTION_PADDING = 6;
 
+/** Высота секции класса или сущности из rows строк. Пустая секция высотой в одну строку. */
+export function sectionHeight(rows: number): number {
+  return Math.max(rows, 1) * SMALL_LINE_HEIGHT + SECTION_PADDING * 2;
+}
+
 /** Подпись стрелки мельче текста фигур и не шире LABEL_MAX_WIDTH. */
 export const LABEL_FONT_SIZE = 14;
 export const LABEL_LINE_HEIGHT = 18;

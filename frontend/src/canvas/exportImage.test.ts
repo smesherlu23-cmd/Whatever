@@ -10,6 +10,7 @@ import {
   planExport,
   selectionSource,
 } from './exportImage';
+import { recordingContext } from '../testing/canvas';
 import { ImageCache } from './images';
 import type { Theme } from './scene';
 
@@ -49,26 +50,6 @@ function page(...elements: ShapeElement[]) {
   const doc = new BoardDocument();
   for (const el of elements) doc.add(el);
   return doc.page('main');
-}
-
-type Call = [string, ...unknown[]];
-
-function recorder(): { ctx: CanvasRenderingContext2D; calls: Call[] } {
-  const calls: Call[] = [];
-  const ctx = new Proxy(
-    {},
-    {
-      get: (_target, prop) =>
-        prop === 'measureText'
-          ? (text: string) => ({ width: text.length * 8 })
-          : (...args: unknown[]) => calls.push([String(prop), ...args]),
-      set: (_target, prop, value) => {
-        calls.push([`set ${String(prop)}`, value]);
-        return true;
-      },
-    },
-  ) as unknown as CanvasRenderingContext2D;
-  return { ctx, calls };
 }
 
 describe('planExport', () => {
@@ -120,13 +101,13 @@ describe('drawExport', () => {
     const plan = planExport(source, 2);
     if (!plan) throw new Error('Nothing to export');
 
-    const solid = recorder();
+    const solid = recordingContext();
     drawExport(solid.ctx, source, plan, theme, 'light');
     expect(solid.calls).toContainEqual(['fillRect', 0, 0, plan.width, plan.height]);
     expect(solid.calls).toContainEqual(['setTransform', 2, 0, 0, 2, 64, 64]);
     expect(solid.calls.filter(([name]) => name === 'fillText')).toHaveLength(1);
 
-    const clear = recorder();
+    const clear = recordingContext();
     drawExport(clear.ctx, source, plan, theme, 'transparent');
     expect(clear.calls).not.toContainEqual(['fillRect', 0, 0, plan.width, plan.height]);
   });
@@ -145,7 +126,7 @@ describe('exportPng', () => {
     const images = new ImageCache((id) => `/files/${id}`);
     const ready = vi.spyOn(images, 'ready').mockResolvedValue();
     vi.spyOn(images, 'get').mockReturnValue(null);
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recorder().ctx);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recordingContext().ctx);
     HTMLCanvasElement.prototype.toBlob = vi.fn((done: BlobCallback, type?: string) => {
       done(new Blob(['png'], { type }));
     });

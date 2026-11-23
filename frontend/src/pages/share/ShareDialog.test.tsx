@@ -14,6 +14,7 @@ const BOARD: BoardInfo = {
   owner: OWNER,
   folder_id: null,
   access: 'manage',
+  is_template: false,
   created_at: '',
   updated_at: '',
 };
@@ -140,6 +141,62 @@ describe('ShareDialog', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(
       'Недостаточно прав для этого действия',
     );
+  });
+
+  it('saves a copy of the board as a company template', async () => {
+    const fetch = stubServer((method, path, body) => {
+      if (path === '/boards/b1/access') {
+        return Response.json({ owner: OWNER, members: [], links: [] });
+      }
+      if (path === '/users') return Response.json([]);
+      if (method === 'POST' && path === '/boards/b1/template') {
+        return Response.json({ ...BOARD, id: 't1', is_template: true, ...(body as object) });
+      }
+      return failure(500, 'Сбой');
+    });
+    open();
+    const section = await screen.findByRole('region', { name: 'Шаблон компании' });
+    const name = within(section).getByRole('textbox', { name: 'Название шаблона' });
+    expect(name).toHaveProperty('value', 'Схема');
+    fireEvent.change(name, { target: { value: 'Схема сервиса' } });
+    fireEvent.click(within(section).getByRole('button', { name: 'Сохранить шаблоном' }));
+
+    const saved = await within(section).findByRole('status');
+    expect(saved.textContent).toBe('Шаблон «Схема сервиса» сохранён. Все шаблоны');
+    expect(within(saved).getByRole('link').getAttribute('href')).toBe('/?view=templates');
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/boards/b1/template',
+      expect.objectContaining({ body: JSON.stringify({ name: 'Схема сервиса' }) }),
+    );
+  });
+
+  it('explains why the template was not saved', async () => {
+    stubServer((_method, path) => {
+      if (path === '/boards/b1/access') {
+        return Response.json({ owner: OWNER, members: [], links: [] });
+      }
+      if (path === '/users') return Response.json([]);
+      return failure(403, 'Недостаточно прав для этого действия');
+    });
+    open();
+    const section = await screen.findByRole('region', { name: 'Шаблон компании' });
+    fireEvent.change(within(section).getByRole('textbox'), { target: { value: ' ' } });
+    const save = within(section).getByRole('button', { name: 'Сохранить шаблоном' });
+    expect(save).toHaveProperty('disabled', true);
+    fireEvent.change(within(section).getByRole('textbox'), { target: { value: 'Схема' } });
+    fireEvent.click(save);
+    expect((await within(section).findByRole('alert')).textContent).toBe(
+      'Недостаточно прав для этого действия',
+    );
+  });
+
+  it('explains who sees a template and does not offer to save it again', async () => {
+    serve();
+    const template = { ...BOARD, name: 'C4', is_template: true };
+    render(<ShareDialog board={template} me={OWNER.id} onClose={vi.fn()} />);
+    expect(await screen.findByRole('dialog', { name: 'Доступ к шаблону «C4»' })).toBeTruthy();
+    expect(screen.getByText(/Это шаблон компании: его видят все сотрудники/)).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Шаблон компании' })).toBeNull();
   });
 
   it('closes on the close button', async () => {

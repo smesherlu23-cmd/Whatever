@@ -1,6 +1,8 @@
 """Картинки и вложения: загрузка, скачивание, права и удаление вместе с доской."""
 
+import errno
 import logging
+import os
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -336,3 +338,57 @@ async def test_a_failed_upload_leaves_no_partial_file(tmp_path: Path) -> None:
     assert list((tmp_path / str(board_id)).iterdir()) == []
     # Удаление доски без файлов — не ошибка.
     await files.delete_board(uuid.uuid4())
+
+
+async def save_bytes(files: FileStore, board_id: uuid.UUID, content: bytes) -> uuid.UUID:
+    async def chunks() -> AsyncIterator[bytes]:
+        yield content
+
+    file_id = uuid.uuid4()
+    await files.save(board_id, file_id, chunks())
+    return file_id
+
+
+async def test_a_copied_board_shares_files_on_disk(tmp_path: Path) -> None:
+    files = FileStore(tmp_path, max_size=1000)
+    source, target = uuid.uuid4(), uuid.uuid4()
+    file_id = await save_bytes(files, source, PNG)
+
+    await files.copy_board(source, target, [file_id])
+    original, copy = files.path(source, file_id), files.path(target, file_id)
+    assert copy.read_bytes() == PNG
+    assert copy.stat().st_ino == original.stat().st_ino
+    await files.delete_board(source)
+    assert copy.read_bytes() == PNG
+
+
+async def test_files_are_copied_where_hard_links_are_not_supported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = FileStore(tmp_path, max_size=1000)
+    source, target = uuid.uuid4(), uuid.uuid4()
+    file_id = await save_bytes(files, source, PNG)
+
+    def no_links(*_: object) -> None:
+        raise OSError(errno.EXDEV, "жёсткие ссылки не поддерживаются")
+
+    monkeypatch.setattr(os, "link", no_links)
+    await files.copy_board(source, target, [file_id])
+    copy = files.path(target, file_id)
+    assert copy.read_bytes() == PNG
+    assert copy.stat().st_ino != files.path(source, file_id).stat().st_ino
+
+
+async def test_a_file_missing_on_disk_is_skipped_when_copying(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    files = FileStore(tmp_path, max_size=1000)
+    source, target = uuid.uuid4(), uuid.uuid4()
+    kept = await save_bytes(files, source, PNG)
+    lost = uuid.uuid4()
+
+    with caplog.at_level(logging.WARNING):
+        await files.copy_board(source, target, [lost, kept])
+    assert files.path(target, kept).read_bytes() == PNG
+    assert not files.path(target, lost).exists()
+    assert str(lost) in caplog.text

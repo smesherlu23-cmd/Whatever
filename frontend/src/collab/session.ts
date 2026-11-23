@@ -100,6 +100,16 @@ export class BoardSession {
       void local.clearData();
     });
 
+    // Доска открывается так, чтобы было видно её содержимое: по локальной копии, а если её
+    // ещё нет — по состоянию с сервера. Если человек уже двигал доску, камера остаётся.
+    const reveal = () => {
+      this.editor.revealContent();
+    };
+    local.once('synced', reveal);
+    provider.on('sync', (synced: boolean) => {
+      if (synced) reveal();
+    });
+
     return () => {
       this.follow.stop();
       stopEditorSync();

@@ -23,9 +23,17 @@ export interface BoardInfo {
   /** Папка в списке владельца; у чужих досок всегда null. */
   folder_id: string | null;
   access: Access;
+  /** Шаблон компании: его видят все и выбирают при создании доски. */
+  is_template: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * С чего начинается новая доска: с содержимого, собранного в браузере (так создаются доски
+ * по встроенным шаблонам), или с копии шаблона компании. Без источника доска пустая.
+ */
+export type BoardSource = { content: string } | { template_id: string };
 
 export interface Folder {
   id: string;
@@ -191,14 +199,26 @@ export const api = {
   /** Все доски сервера, только для администратора. */
   listAllBoards: () => sendJson<BoardInfo[]>('/boards?all=true'),
   getBoard: (id: string) => sendJson<BoardInfo>(`/boards/${id}`),
-  createBoard: (name: string, folderId: string | null = null) =>
-    sendJson<BoardInfo>('/boards', { method: 'POST', body: { name, folder_id: folderId } }),
+  createBoard: (name: string, folderId: string | null = null, source?: BoardSource) =>
+    sendJson<BoardInfo>('/boards', {
+      method: 'POST',
+      body: { name, folder_id: folderId, ...source },
+    }),
   renameBoard: (id: string, name: string) =>
     sendJson<BoardInfo>(`/boards/${id}`, { method: 'PATCH', body: { name } }),
   /** null переносит доску из папки в корень. */
   moveBoard: (id: string, folderId: string | null) =>
     sendJson<BoardInfo>(`/boards/${id}`, { method: 'PATCH', body: { folder_id: folderId } }),
   deleteBoard: (id: string) => sendEmpty(`/boards/${id}`, { method: 'DELETE' }),
+  /** Содержимое доски одним обновлением Yjs: по нему рисуется превью шаблона. */
+  boardContent: async (id: string) =>
+    new Uint8Array(await (await send(`/boards/${id}/content`)).arrayBuffer()),
+
+  /** Шаблоны компании по названию. */
+  listTemplates: () => sendJson<BoardInfo[]>('/templates'),
+  /** Сохраняет копию доски шаблоном компании. */
+  saveTemplate: (boardId: string, name: string) =>
+    sendJson<BoardInfo>(`/boards/${boardId}/template`, { method: 'POST', body: { name } }),
 
   listFolders: () => sendJson<Folder[]>('/folders'),
   createFolder: (name: string, parentId: string | null) =>

@@ -1,7 +1,8 @@
 """Кто и что может делать с доской.
 
 Доступ к доске складывается так: владелец и администраторы управляют ею, участники
-получают просмотр или редактирование от владельца или по ссылке, остальные доску не видят.
+получают просмотр или редактирование от владельца или по ссылке, шаблоны компании
+видят все, а остальные доски посторонним не видны.
 """
 
 import uuid
@@ -43,7 +44,10 @@ def access_from(board: Board, user: User, role: BoardRole | None) -> Access | No
     """Доступ пользователя к доске, если его право участника уже известно."""
     if manages(board, user):
         return Access.MANAGE
-    return ROLE_ACCESS[role] if role is not None else None
+    if role is not None:
+        return ROLE_ACCESS[role]
+    # С шаблона компании любой может создать свою доску, поэтому смотреть его могут все.
+    return Access.VIEW if board.is_template else None
 
 
 async def member_role(
@@ -63,7 +67,8 @@ async def access_to(db: AsyncSession, board: Board, user: User) -> Access | None
 
 
 async def visible_boards(db: AsyncSession, user: User) -> list[tuple[Board, Access]]:
-    """Доски, которые пользователь создал или к которым ему дали доступ, начиная с недавних."""
+    """Доски, которые пользователь создал или к которым ему дали доступ, начиная с недавних.
+    Шаблоны сюда не входят: у них свой список."""
     memberships = await db.execute(
         select(BoardMember.board_id, BoardMember.role).where(BoardMember.user_id == user.id)
     )
@@ -71,7 +76,10 @@ async def visible_boards(db: AsyncSession, user: User) -> list[tuple[Board, Acce
     boards = await db.scalars(
         select(Board)
         .options(joinedload(Board.owner))
-        .where(or_(Board.owner_id == user.id, Board.id.in_(list(roles))))
+        .where(
+            or_(Board.owner_id == user.id, Board.id.in_(list(roles))),
+            Board.is_template.is_(False),
+        )
         .order_by(Board.updated_at.desc())
     )
     return [

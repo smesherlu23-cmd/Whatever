@@ -144,6 +144,11 @@ export class Editor {
   private readonly listeners = new Set<() => void>();
   /** Камеры страниц, на которых уже побывали: при возврате страница видна как прежде. */
   private readonly cameras = new Map<string, Camera>();
+  /**
+   * Камеру открытой страницы уже поставили: человек двигал доску или начал на ней работать,
+   * за кем-то следуют или страницу открыли переходом. Тогда revealContent её не трогает.
+   */
+  private cameraPlaced = false;
 
   constructor(doc: BoardDocument = new BoardDocument()) {
     this.doc = doc;
@@ -240,7 +245,9 @@ export class Editor {
     this.selection = new Set();
     this.cameras.set(this.pageId, this.camera);
     this.pageId = id;
-    this.camera = this.cameras.get(id) ?? initialCamera;
+    // Страница, открытая впервые, показывает своё содержимое целиком.
+    this.camera = this.cameras.get(id) ?? this.fittedCamera() ?? initialCamera;
+    this.cameraPlaced = true;
     this.emit();
   }
 
@@ -303,6 +310,7 @@ export class Editor {
 
   setCamera(camera: Camera): void {
     this.camera = camera;
+    this.cameraPlaced = true;
     this.emit();
   }
 
@@ -340,8 +348,24 @@ export class Editor {
 
   /** Показывает всё, что есть на странице. Мелкое не увеличивает больше 100%. */
   zoomToFit(): void {
+    const camera = this.fittedCamera();
+    if (camera) this.setCamera(camera);
+  }
+
+  /**
+   * Показывает всё, что есть на открытой странице, если её камеру ещё никто не ставил.
+   * Так доска, загруженная с сервера, сразу показывает своё содержимое, где бы оно ни было.
+   */
+  revealContent(): void {
+    if (!this.cameraPlaced) this.zoomToFit();
+  }
+
+  /** Камера, при которой видно всё содержимое страницы; null, если смотреть не на что. */
+  private fittedCamera(): Camera | null {
     const bounds = contentBounds(this.page.list(), this.lookup);
-    if (bounds) this.setCamera(fitCamera(bounds, this.viewport, FIT_PADDING_PX, 1));
+    const { width, height } = this.viewport;
+    if (!bounds || width <= 0 || height <= 0) return null;
+    return fitCamera(bounds, this.viewport, FIT_PADDING_PX, 1);
   }
 
   /** Показывает выделенное во всё окно. Возвращает false, если ничего не выделено. */
@@ -434,6 +458,8 @@ export class Editor {
     const world = this.toWorld(screen);
     const button = input.button ?? 0;
     this.doc.stopCapturing();
+    // Человек уже работает с доской: камера не прыгнет, когда догрузится содержимое.
+    this.cameraPlaced = true;
 
     if (button === 1 || (button === 0 && this.spaceHeld)) {
       this.interaction = { type: 'pan', last: screen };

@@ -9,13 +9,16 @@
 """
 
 import asyncio
+import logging
 import os
 import shutil
 import uuid
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
+
+log = logging.getLogger(__name__)
 
 OCTET_STREAM = "application/octet-stream"
 
@@ -92,6 +95,24 @@ def _remove_tree(path: Path) -> None:
         return
 
 
+def _share(source: Path, target: Path) -> None:
+    """Даёт файлу source второе имя target, а где жёстких ссылок нет — копирует его."""
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def _share_all(pairs: list[tuple[Path, Path]]) -> None:
+    for source, target in pairs:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _share(source, target)
+        except FileNotFoundError:
+            # Файла нет на диске, хотя база о нём знает: у копии он будет так же недоступен.
+            log.warning("Файл %s не найден на диске и не скопирован", source)
+
+
 class FileStore:
     """Файлы досок в каталоге root. Файл больше max_size байт не принимается."""
 
@@ -141,6 +162,23 @@ class FileStore:
     async def delete(self, board_id: uuid.UUID, file_id: uuid.UUID) -> None:
         await asyncio.to_thread(self.path(board_id, file_id).unlink, missing_ok=True)
 
+    async def copy_board(
+        self, source: uuid.UUID, target: uuid.UUID, file_ids: Iterable[uuid.UUID]
+    ) -> None:
+        """Даёт доске target файлы доски source под теми же id.
+
+        Записанный файл больше не меняется, поэтому копия делит его с источником жёсткой
+        ссылкой: копирование мгновенное и не занимает места на диске, а удаление одной
+        из досок не трогает файлы другой.
+        """
+        pairs = [(self.path(source, i), self.path(target, i)) for i in file_ids]
+        await asyncio.to_thread(_share_all, pairs)
+
     async def delete_board(self, board_id: uuid.UUID) -> None:
         """Удаляет все файлы доски."""
         await asyncio.to_thread(_remove_tree, self.root / str(board_id))
+
+    def discard_board(self, board_id: uuid.UUID) -> None:
+        """Удаляет файлы доски сразу, без потока: для уборки при отмене запроса, когда
+        любое ожидание прервётся снова. У копии доски это только жёсткие ссылки."""
+        _remove_tree(self.root / str(board_id))

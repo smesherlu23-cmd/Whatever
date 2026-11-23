@@ -1,7 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as Y from 'yjs';
 import { onSignedOut } from '../api';
 import { FakeSocket, indexeddbStub } from '../testing/fakeSocket';
+import { BoardDocument } from '../model/document';
+import { contains } from '../model/geometry';
+import { DEFAULT_FILL, DEFAULT_STROKE, type ShapeElement } from '../model/types';
 import { BoardSession } from './session';
+
+function note(id: string, x: number, y: number): ShapeElement {
+  return {
+    id,
+    kind: 'note',
+    page: 'main',
+    x,
+    y,
+    w: 160,
+    h: 100,
+    text: '',
+    stroke: DEFAULT_STROKE,
+    fill: DEFAULT_FILL,
+    z: 1,
+  };
+}
 
 // В jsdom нет IndexedDB; локальная копия проверяется вручную в браузере.
 vi.mock('y-indexeddb', () => import('../testing/fakeSocket').then((m) => m.indexeddbStub));
@@ -99,6 +119,36 @@ describe('BoardSession', () => {
     expect(FakeSocket.instances).toHaveLength(1);
     stop();
     stopListening();
+  });
+
+  it('shows the content of the board once its local copy has loaded', () => {
+    const session = new BoardSession('board-1', 'Анна');
+    session.editor.setViewport({ width: 800, height: 600 });
+    const stop = session.start();
+    const copy = new BoardDocument();
+    copy.add(note('far', 3000, 2000));
+    Y.applyUpdate(session.doc, Y.encodeStateAsUpdate(copy.doc));
+    expect(session.editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+
+    indexeddbStub.IndexeddbPersistence.last?.load();
+    const visible = session.editor.visibleArea();
+    expect(visible && contains(visible, { x: 3000, y: 2000, w: 160, h: 100 })).toBe(true);
+    stop();
+  });
+
+  it('keeps the camera the user has already moved', () => {
+    const session = new BoardSession('board-1', 'Анна');
+    session.editor.setViewport({ width: 800, height: 600 });
+    const stop = session.start();
+    session.editor.wheel({ x: 0, y: 0 }, 0, 100, false);
+    const moved = session.editor.camera;
+    const copy = new BoardDocument();
+    copy.add(note('far', 3000, 2000));
+    Y.applyUpdate(session.doc, Y.encodeStateAsUpdate(copy.doc));
+
+    indexeddbStub.IndexeddbPersistence.last?.load();
+    expect(session.editor.camera).toBe(moved);
+    stop();
   });
 
   it('can be started again after it was stopped', () => {

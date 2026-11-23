@@ -139,6 +139,14 @@
   font-size: 13px;
 }
 
+.badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .status[data-status='disconnected'] {
   color: var(--warning);
 }
@@ -181,6 +189,11 @@
 
 .boards li:first-child {
   border-top: 0;
+}
+
+/* Кнопки справа от названия не прижимаются к рамке списка. */
+.boards li > :last-child:not(a) {
+  margin-right: 8px;
 }
 
 .boards a {

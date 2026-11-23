@@ -21,6 +21,7 @@ import {
   SMALL_LINE_HEIGHT,
   TEXT_PADDING,
   labelLayout,
+  sectionHeight,
   wrapText,
 } from '../model/textLayout';
 import type { ArrowElement, ArrowHead, Bounds, Point, ShapeElement } from '../model/types';
@@ -293,7 +294,7 @@ function drawCompartments(
       ctx.stroke();
     }
     const top = y + SECTION_PADDING;
-    y = top + Math.max(rows.length, 1) * SMALL_LINE_HEIGHT + SECTION_PADDING;
+    y += sectionHeight(rows.length);
     if (editing) return;
     ctx.fillStyle = color;
     ctx.textBaseline = 'middle';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BoardDocument } from '../model/document';
 import { DEFAULT_FILL, DEFAULT_STROKE, type ShapeElement } from '../model/types';
+import { recordingContext } from '../testing/canvas';
 import { drawMinimap, minimapToWorld, minimapView } from './minimap';
 import type { Theme } from './scene';
 
@@ -71,20 +72,7 @@ describe('minimap', () => {
       z: 2,
     });
     const page = doc.page('main');
-    const calls: [string, ...unknown[]][] = [];
-    const ctx = new Proxy(
-      {},
-      {
-        get:
-          (_target, prop) =>
-          (...args: unknown[]) =>
-            calls.push([String(prop), ...args]),
-        set: (_target, prop, value) => {
-          calls.push([`set ${String(prop)}`, value]);
-          return true;
-        },
-      },
-    ) as unknown as CanvasRenderingContext2D;
+    const { ctx, calls } = recordingContext();
     const view = minimapView(page, camera, viewport, size);
     drawMinimap(ctx, view, page, { x: 0, y: 0, w: 400, h: 300 }, theme, [
       { color: '#e11d48', at: { x: 50, y: 50 } },

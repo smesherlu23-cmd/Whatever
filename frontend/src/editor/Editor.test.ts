@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
-import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE } from '../model/types';
+import {
+  DEFAULT_FILL,
+  DEFAULT_PAGE,
+  DEFAULT_STICKY_FILL,
+  DEFAULT_STROKE,
+  type ShapeElement,
+} from '../model/types';
 import { Editor } from './Editor';
 
 function drag(editor: Editor, from: [number, number], to: [number, number], shift = false) {
@@ -8,6 +14,22 @@ function drag(editor: Editor, from: [number, number], to: [number, number], shif
   editor.pointerMove({ x: (from[0] + to[0]) / 2, y: (from[1] + to[1]) / 2 }, { shift });
   editor.pointerMove({ x: to[0], y: to[1] }, { shift });
   editor.pointerUp();
+}
+
+function rectangle(id: string, x: number, y: number): ShapeElement {
+  return {
+    id,
+    kind: 'rectangle',
+    page: DEFAULT_PAGE,
+    x,
+    y,
+    w: 100,
+    h: 100,
+    text: '',
+    stroke: DEFAULT_STROKE,
+    fill: DEFAULT_FILL,
+    z: 1,
+  };
 }
 
 describe('Editor', () => {
@@ -216,6 +238,50 @@ describe('Editor', () => {
     expect(editor.camera.zoom).toBeCloseTo(Math.min(904 / 3000, 704 / 2100));
     expect(editor.zoomToSelection()).toBe(true);
     expect(editor.viewportCenter().x).toBeCloseTo(2950);
+  });
+
+  it('reveals the content of a loaded page until the camera has been placed', () => {
+    const editor = new Editor();
+    // Смотреть не на что или окно ещё не показано: камера ждёт.
+    editor.revealContent();
+    editor.doc.add(rectangle('far', 3000, 2000));
+    editor.revealContent();
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+
+    editor.setViewport({ width: 800, height: 600 });
+    editor.revealContent();
+    expect(editor.viewportCenter()).toEqual({ x: 3050, y: 2050 });
+    expect(editor.camera.zoom).toBe(1);
+
+    // Камеру уже поставили: новое содержимое её не двигает.
+    editor.doc.add(rectangle('farther', 9000, 2000));
+    editor.revealContent();
+    expect(editor.viewportCenter()).toEqual({ x: 3050, y: 2050 });
+  });
+
+  it('does not move the camera once the user starts working with the board', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    editor.pointerDown({ x: 10, y: 10 });
+    editor.pointerUp();
+    editor.doc.add(rectangle('far', 3000, 2000));
+    editor.revealContent();
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+  });
+
+  it('opens a page for the first time showing all of it and returning keeps its camera', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    const page = editor.doc.addPage('Контейнеры');
+    editor.doc.add({ ...rectangle('far', 3000, 2000), page });
+    editor.setPage(page);
+    expect(editor.viewportCenter()).toEqual({ x: 3050, y: 2050 });
+
+    editor.setCamera({ x: 0, y: 0, zoom: 2 });
+    editor.setPage(DEFAULT_PAGE);
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+    editor.setPage(page);
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 2 });
   });
 
   it('selects shapes fully inside the marquee', () => {

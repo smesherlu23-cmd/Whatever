@@ -17,6 +17,7 @@ function board(id: string, name: string, extra: Partial<BoardInfo> = {}): BoardI
     owner,
     folder_id: null,
     access: 'manage',
+    is_template: false,
     created_at: '2026-11-20T10:00:00Z',
     updated_at: '2026-11-20T10:00:00Z',
     ...extra,
@@ -78,11 +79,16 @@ describe('BoardsPage', () => {
   });
 
   it('creates a board in the open folder and opens it', async () => {
-    const fetch = serve((method, path) =>
-      method === 'POST' && path === '/boards' ? Response.json(board('b-new', 'Новая доска')) : null,
-    );
+    const fetch = serve((method, path) => {
+      if (method === 'POST' && path === '/boards') {
+        return Response.json(board('b-new', 'Новая доска'));
+      }
+      return path === '/templates' ? Response.json([]) : null;
+    });
     render(withAuth(<BoardsPage view={{ view: 'mine', folderId: PROJECTS.id }} />, asMember));
     fireEvent.click(await screen.findByRole('button', { name: 'Создать доску' }));
+    const dialog = screen.getByRole('dialog', { name: 'Новая доска' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Создать' }));
     await waitFor(() => {
       expect(window.location.pathname).toBe('/b/b-new');
     });
@@ -164,6 +170,71 @@ describe('BoardsPage', () => {
     expect(screen.queryByText('Схема сервисов')).toBeNull();
     expect(screen.getByRole('link', { name: 'Доступные мне' }).getAttribute('aria-current')).toBe(
       'page',
+    );
+  });
+
+  it('lists company templates and creates a board from one', async () => {
+    const mine = board('t-mine', 'Ретро команды', { is_template: true });
+    const theirs = board('t-theirs', 'Архитектура', {
+      is_template: true,
+      owner: colleague,
+      access: 'view',
+    });
+    const fetch = serve((method, path) => {
+      if (path === '/templates') return Response.json([theirs, mine]);
+      if (path.endsWith('/content')) return new Response(new Uint8Array([0, 0]));
+      if (method === 'POST' && path === '/boards') return Response.json(board('b-new', 'Копия'));
+      return null;
+    });
+    render(withAuth(<BoardsPage view={{ view: 'templates' }} />, asMember));
+    expect(await screen.findByText('Архитектура')).toBeTruthy();
+    expect(screen.getByText(/автор Анна Смирнова/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Шаблоны' }).getAttribute('aria-current')).toBe('page');
+    // Удалить можно только свой шаблон, а создать доску — по любому.
+    expect(screen.queryByRole('button', { name: 'Удалить шаблон Архитектура' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Удалить шаблон Ретро команды' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Создать доску по шаблону Архитектура' }));
+    const dialog = screen.getByRole('dialog', { name: 'Доска по шаблону «Архитектура»' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Создать' }));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/b/b-new');
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/boards',
+      expect.objectContaining({
+        body: JSON.stringify({ name: 'Архитектура', folder_id: null, template_id: theirs.id }),
+      }),
+    );
+  });
+
+  it('deletes a template after a warning that its boards stay', async () => {
+    const template = board('t-mine', 'Ретро команды', { is_template: true });
+    serve((method, path) => {
+      if (method === 'DELETE') return new Response(null, { status: 204 });
+      return path === '/templates' ? Response.json([template]) : null;
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(withAuth(<BoardsPage view={{ view: 'templates' }} />, asMember));
+    fireEvent.click(await screen.findByRole('button', { name: 'Удалить шаблон Ретро команды' }));
+    expect(confirm).toHaveBeenCalledWith(
+      'Удалить шаблон «Ретро команды»? Доски, созданные по нему, останутся.',
+    );
+    expect(await screen.findByText('Шаблонов пока нет.')).toBeTruthy();
+  });
+
+  it('explains that a template could not be deleted', async () => {
+    serve((method, path) => {
+      if (method === 'DELETE') return Response.json({ detail: 'Сбой' }, { status: 500 });
+      return path === '/templates'
+        ? Response.json([board('t', 'Ретро', { is_template: true })])
+        : null;
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(withAuth(<BoardsPage view={{ view: 'templates' }} />, asMember));
+    fireEvent.click(await screen.findByRole('button', { name: 'Удалить шаблон Ретро' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Не удалось удалить шаблон «Ретро». Проверьте связь с сервером.',
     );
   });
 

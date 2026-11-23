@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, LargeBinary, String, func
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, LargeBinary, String, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -70,6 +70,8 @@ class Folder(Base):
 
 
 class Board(Base):
+    """Доска. Шаблон компании — тоже доска: его видят все, а копию с него получает новая доска."""
+
     __tablename__ = "boards"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -82,6 +84,8 @@ class Board(Base):
     folder_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("folders.id", ondelete="SET NULL"), index=True
     )
+    # Шаблоны не попадают в списки досок, их выбирают при создании новой доски.
+    is_template: Mapped[bool] = mapped_column(default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

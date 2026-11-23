@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-from app.api import admin, auth, boards, files, folders, health, sharing, sync, users
+from app.api import admin, auth, boards, files, folders, health, sharing, sync, templates, users
 from app.auth.dependencies import same_origin
 from app.auth.throttle import LoginThrottle
 from app.core.config import Settings, get_settings
@@ -56,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         files.router,
         folders.router,
         sharing.router,
+        templates.router,
         users.router,
         admin.router,
     ):

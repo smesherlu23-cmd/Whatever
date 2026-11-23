@@ -322,6 +322,19 @@ class RoomManager:
             # даже если обработчик подключения прервали.
             await asyncio.shield(closing)
 
+    async def flush(self, board_id: uuid.UUID) -> None:
+        """Дописывает в базу изменения доски, принятые, но ещё не записанные.
+
+        После этого база содержит всё, что видят участники: так копия доски (шаблон
+        или доска из шаблона) не теряет правки последних долей секунды.
+        """
+        closing = self._closing.get(board_id)
+        if closing is not None:
+            await asyncio.gather(asyncio.shield(closing), return_exceptions=True)
+        entry = self._rooms.get(board_id)
+        if entry is not None and entry.room.loaded:
+            await entry.room.save()
+
     def discard(self, board_id: uuid.UUID) -> None:
         """Доску удалили: её открытая комната больше ничего не запишет."""
         entry = self._rooms.get(board_id)

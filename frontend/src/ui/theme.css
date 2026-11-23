@@ -92,3 +92,9 @@ button {
   font: inherit;
   color: inherit;
 }
+
+/* Ссылки цвета текста, а не синие по умолчанию: те не читаются на тёмной теме. */
+a {
+  color: inherit;
+  text-underline-offset: 2px;
+}
