@@ -23,6 +23,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import Database
 from app.core.logging import logging_config
 from app.models import Role, User
+from app.sync.limits import WS_MAX_MESSAGE_BYTES
 
 # Сколько ждать закрытия подключений при остановке, прежде чем записать доски и выйти.
 # Должно быть меньше stop_grace_period в docker-compose.yml, иначе Docker прервёт запись.
@@ -42,6 +43,7 @@ def serve(settings: Settings, *, host: str, port: int, reload: bool) -> None:
         forwarded_allow_ips=settings.forwarded_allow_ips,
         timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
         server_header=False,
+        ws_max_size=WS_MAX_MESSAGE_BYTES,
     )
 
 

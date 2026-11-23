@@ -604,6 +604,21 @@ export class Editor {
     this.emit();
   }
 
+  /**
+   * Несколько положений указателя, накопленных за кадр, по порядку. Штриху нужна каждая точка,
+   * а остальным жестам — только последняя: так перетаскивание даёт одну правку документа
+   * за кадр, а не по правке на каждое событие мыши, и каждая правка не уходит по сети отдельно.
+   */
+  pointerMoves(screens: readonly Point[], input: PointerInput = {}): void {
+    const last = screens.at(-1);
+    if (!last) return;
+    if (this.interaction.type === 'draw') {
+      for (const screen of screens) this.pointerMove(screen, input);
+    } else {
+      this.pointerMove(last, input);
+    }
+  }
+
   pointerMove(screen: Point, input: PointerInput = {}): void {
     const world = this.toWorld(screen);
     const it = this.interaction;

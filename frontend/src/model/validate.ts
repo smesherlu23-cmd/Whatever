@@ -27,6 +27,10 @@ const isNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 const isString = (value: unknown): value is string => typeof value === 'string';
 
+// id файла сервер выдаёт сам (UUID), и оно попадает в адрес запроса. Другая строка из чужого
+// документа могла бы увести запрос на другой адрес API, например «../../admin/users».
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function isPoint(value: unknown): value is Point {
   return isRecord(value) && isNumber(value.x) && isNumber(value.y);
 }
@@ -75,9 +79,8 @@ function parseArrowEnd(value: unknown): ArrowEnd | null {
 function parseFileRef(value: unknown): FileRef | null {
   if (!isRecord(value)) return null;
   const { id, name, size, type } = value;
-  if (!isString(id) || !isString(name) || !isString(type) || !isNumber(size) || size < 0) {
-    return null;
-  }
+  if (!isString(id) || !UUID.test(id) || !isString(name) || !isString(type)) return null;
+  if (!isNumber(size) || size < 0) return null;
   return { id, name, size, type };
 }
 

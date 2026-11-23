@@ -11,6 +11,7 @@ import {
 import { type Call, recordingContext } from '../testing/canvas';
 import { renderBoard } from './render';
 import type { Theme } from './scene';
+import { fileId } from '../testing/helpers';
 
 const theme: Theme = {
   background: '#f4f4f5',
@@ -323,7 +324,7 @@ describe('renderBoard catalog shapes', () => {
 });
 
 describe('renderBoard files', () => {
-  const file = { id: 'f1', name: 'Схема сети.png', size: 3 * 1024 * 1024, type: 'image/png' };
+  const file = { id: fileId(1), name: 'Схема сети.png', size: 3 * 1024 * 1024, type: 'image/png' };
 
   it('draws a loaded picture and a placeholder while it loads', () => {
     const editor = new Editor();
@@ -341,7 +342,7 @@ describe('renderBoard files', () => {
     const loaded = recordingContext();
     renderBoard(loaded.ctx, editor, {
       ...frame,
-      images: (id) => (id === 'f1' ? picture : null),
+      images: (id) => (id === fileId(1) ? picture : null),
     });
     expect(named(loaded.calls, 'drawImage')).toEqual([['drawImage', picture, 0, 0, 300, 200]]);
   });

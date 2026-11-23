@@ -60,6 +60,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "tests/**" = ["S101", "S104", "S105", "S106", "ARG001"]
 # Командная строка отвечает пользователю в stdout.
 "app/cli.py" = ["T201"]
+"scripts/**" = ["T201"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -67,7 +68,7 @@ ban-relative-imports = "all"
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["app", "tests", "alembic/env.py"]
+files = ["app", "tests", "scripts", "alembic/env.py"]
 plugins = ["pydantic.mypy"]
 exclude = ["alembic/versions"]
 

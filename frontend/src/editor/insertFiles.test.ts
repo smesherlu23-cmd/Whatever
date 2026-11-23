@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type UploadedFile } from '../api';
 import * as prepare from '../files/prepare';
-import { deferred, shapes } from '../testing/helpers';
+import { deferred, fileId, shapes } from '../testing/helpers';
 import { Editor } from './Editor';
 import { insertFiles } from './insertFiles';
 
 function uploaded(name: string, contentType: string): UploadedFile {
-  return { id: `id-${name}`, name, content_type: contentType, size: 1000 };
+  return { id: fileId(1), name, content_type: contentType, size: 1000 };
 }
 
 function prepared(file: File, picture: { width: number; height: number } | null) {
@@ -38,7 +38,7 @@ describe('insertFiles', () => {
     // Длинная сторона картинки — 480 экранных пикселей; карточка стоит справа от неё.
     expect(picture).toMatchObject({ kind: 'image', x: -382, y: -120, w: 480, h: 240 });
     expect(picture?.file).toEqual({
-      id: 'id-фото.jpg',
+      id: fileId(1),
       name: 'фото.jpg',
       size: 1000,
       type: 'image/jpeg',

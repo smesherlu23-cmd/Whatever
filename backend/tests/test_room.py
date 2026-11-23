@@ -8,15 +8,25 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
 import pytest
-from pycrdt import Doc, Map, create_sync_message, create_update_message
+from pycrdt import (
+    Awareness,
+    Doc,
+    Map,
+    create_awareness_message,
+    create_sync_message,
+    create_update_message,
+)
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload, undefer
 
 from app.core.config import get_settings
 from app.core.db import Database, Sessions
 from app.models import Board, BoardUpdate, BoardVersion, User
+from app.sync.limits import AWARENESS_BURST, AWARENESS_MAX_BYTES, AWARENESS_PER_SECOND, RateLimit
+from app.sync.outbox import Outbox
 from app.sync.room import VERSIONS_CHANGED, Connection, Room, RoomManager, SavePolicy
 from app.versions import save_version
+from tests.test_outbox import Overflows, Stuck, settle
 
 # Комната записывает версии через save_version, импортированную в свой модуль.
 ROOM_SAVE_VERSION = "app.sync.room.save_version"
@@ -478,3 +488,63 @@ async def test_changes_of_a_named_version_that_failed_go_into_the_next_one(
 
 async def broken_save(*_args: Any, **_kwargs: Any) -> uuid.UUID:
     raise ConnectionError("database is down")
+
+
+async def test_a_stuck_participant_does_not_delay_the_others(
+    sessions: Sessions, someone: uuid.UUID
+) -> None:
+    board_id = await new_board(sessions)
+    rooms = RoomManager(sessions, POLICY)
+    stuck_outbox = Outbox(Stuck().send, limit=1024 * 1024, on_overflow=Overflows())
+    other, author = Recorder(), Recorder()
+    other_outbox = Outbox(other.send, limit=1024 * 1024, on_overflow=Overflows())
+    author_conn = Connection(author.send, someone)
+    async with (
+        stuck_outbox.running(),
+        other_outbox.running(),
+        rooms.connect(board_id, Connection(stuck_outbox.send, someone)),
+        rooms.connect(board_id, Connection(other_outbox.send, someone)),
+        rooms.connect(board_id, author_conn) as room,
+    ):
+        await settle()
+        other.messages.clear()
+        change = create_update_message(Editor().set("shape", 1))
+        async with asyncio.timeout(1):
+            await room.receive(author_conn, change)
+            await settle()
+        assert change in other.messages
+
+
+def presence(awareness: Awareness, state: dict[str, Any]) -> bytes:
+    awareness.set_local_state(state)
+    return create_awareness_message(awareness.encode_awareness_update([awareness.client_id]))
+
+
+async def test_oversized_or_too_frequent_presence_is_dropped(
+    sessions: Sessions, someone: uuid.UUID
+) -> None:
+    board_id = await new_board(sessions)
+    rooms = RoomManager(sessions, POLICY)
+    other, author = Recorder(), Recorder()
+    author_conn = Connection(author.send, someone)
+    # Время стоит на месте, чтобы медленная машина не успела пополнить ведро.
+    author_conn.awareness_limit = RateLimit(
+        AWARENESS_PER_SECOND, AWARENESS_BURST, clock=lambda: 0.0
+    )
+    awareness = Awareness(Doc())
+    async with (
+        rooms.connect(board_id, Connection(other.send, someone)),
+        rooms.connect(board_id, author_conn) as room,
+    ):
+        other.messages.clear()
+        huge = presence(awareness, {"name": "x" * AWARENESS_MAX_BYTES})
+        await room.receive(author_conn, huge)
+        assert other.messages == []
+        assert awareness.client_id not in room.awareness.states
+
+        # Пачка подряд проходит целиком, всё сверх неё отбрасывается.
+        burst = int(AWARENESS_BURST)
+        for x in range(burst + 10):
+            await room.receive(author_conn, presence(awareness, {"cursor": {"x": x, "y": 0}}))
+        assert len(other.messages) == burst
+        assert room.awareness.states[awareness.client_id]["cursor"]["x"] == burst - 1

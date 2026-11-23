@@ -2,6 +2,7 @@
 
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import timedelta
 
 # Предел числа отслеживаемых ключей: память не растёт от перебора случайных логинов.
@@ -57,3 +58,35 @@ class LoginThrottle:
             self._recent(key)
         if len(self._failures) >= MAX_KEYS:
             self._failures.clear()
+
+
+@dataclass(frozen=True)
+class LoginGuard:
+    """Обе защиты входа вместе.
+
+    per_login считает неудачи пары «адрес + логин»: пять ошибок в пароле закрывают вход
+    этой паре. per_address считает все неудачи с адреса: без неё с одного компьютера можно
+    перебирать по пять паролей к каждому логину (password spraying) и нагружать процессор
+    хешированием Argon2. Удачный вход сбрасывает только счётчик пары: иначе свой
+    собственный вход обнулял бы счётчик перебора чужих логинов.
+    """
+
+    per_login: LoginThrottle
+    per_address: LoginThrottle
+
+    def retry_after(self, address: str, login: str) -> int:
+        return max(
+            self.per_login.retry_after(_pair(address, login)),
+            self.per_address.retry_after(address),
+        )
+
+    def failed(self, address: str, login: str) -> None:
+        self.per_login.failed(_pair(address, login))
+        self.per_address.failed(address)
+
+    def succeeded(self, address: str, login: str) -> None:
+        self.per_login.succeeded(_pair(address, login))
+
+
+def _pair(address: str, login: str) -> str:
+    return f"{address}:{login}"

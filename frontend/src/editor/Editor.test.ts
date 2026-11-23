@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { BoardDocument } from '../model/document';
-import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
+import { arrows, defined, fileId, shapes, takeTwo } from '../testing/helpers';
 import {
   DEFAULT_FILL,
   DEFAULT_PAGE,
@@ -35,6 +35,36 @@ function rectangle(id: string, x: number, y: number): ShapeElement {
 }
 
 describe('Editor', () => {
+  it('applies a batch of pointer positions as one document change', () => {
+    const editor = new Editor();
+    editor.doc.add(rectangle('a', 0, 0));
+    editor.pointerDown({ x: 50, y: 50 });
+    const updates = vi.fn();
+    editor.doc.doc.on('update', updates);
+    editor.pointerMoves([60, 70, 80, 90, 100].map((x) => ({ x, y: 50 })));
+    expect(updates).toHaveBeenCalledTimes(1);
+    expect(editor.doc.get('a')).toMatchObject({ x: 50, y: 0 });
+    editor.pointerUp();
+  });
+
+  it('keeps every point of a batch while drawing a stroke', () => {
+    const editor = new Editor();
+    editor.setSmartDrawing(false);
+    editor.setTool('pen');
+    editor.pointerDown({ x: 0, y: 0 });
+    editor.pointerMoves([10, 20, 30].map((x) => ({ x, y: x })));
+    expect(editor.stroke).toHaveLength(4);
+    editor.pointerUp();
+  });
+
+  it('ignores an empty batch', () => {
+    const editor = new Editor();
+    const listener = vi.fn();
+    editor.subscribe(listener);
+    editor.pointerMoves([]);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it('creates a rectangle by dragging and selects it', () => {
     const editor = new Editor();
     editor.setTool('rectangle');
@@ -156,7 +186,7 @@ describe('Editor', () => {
 
   it('keeps the proportions of a picture unless Shift is held', () => {
     const editor = new Editor();
-    const file = { id: 'f1', name: 'схема.png', size: 10, type: 'image/png' };
+    const file = { id: fileId(1), name: 'схема.png', size: 10, type: 'image/png' };
     editor.insert([
       {
         id: 'p',
@@ -183,7 +213,7 @@ describe('Editor', () => {
     const editor = new Editor();
     editor.setViewport({ width: 800, height: 600 });
     expect(editor.viewportCenter()).toEqual({ x: 400, y: 300 });
-    const file = { id: 'f1', name: 'план.pdf', size: 10, type: 'application/octet-stream' };
+    const file = { id: fileId(1), name: 'план.pdf', size: 10, type: 'application/octet-stream' };
     const card = {
       id: 'c',
       kind: 'file' as const,

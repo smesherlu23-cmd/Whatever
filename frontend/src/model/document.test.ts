@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { describe, expect, it, vi } from 'vitest';
 import { BoardDocument, DEFAULT_PAGE_NAME } from './document';
 import { type ArrowElement, DEFAULT_PAGE, type ShapeElement } from './types';
+import { fileId } from '../testing/helpers';
 
 const rect = (id: string, x = 0): ShapeElement => ({
   id,
@@ -342,7 +343,7 @@ describe('BoardDocument.restoreFrom', () => {
     doc.add({
       ...rect('picture'),
       kind: 'image',
-      file: { id: 'f1', name: 'a.png', size: 1, type: 'image/png' },
+      file: { id: fileId(1), name: 'a.png', size: 1, type: 'image/png' },
     });
     const version = versionOf(doc);
     const changed = vi.fn();
@@ -351,7 +352,12 @@ describe('BoardDocument.restoreFrom', () => {
     expect(changed).not.toHaveBeenCalled();
 
     fieldsOf(doc, 'sketch')?.set('points', [0, 0, 1, 1]);
-    fieldsOf(doc, 'picture')?.set('file', { id: 'f2', name: 'a.png', size: 1, type: 'image/png' });
+    fieldsOf(doc, 'picture')?.set('file', {
+      id: fileId(2),
+      name: 'a.png',
+      size: 1,
+      type: 'image/png',
+    });
     fieldsOf(version, 'sketch')?.set('points', { 0: 0 });
     doc.restoreFrom(version);
     expect(fieldsOf(doc, 'sketch')?.get('points')).toEqual({ 0: 0 });

@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     """Сколько дней действует вход без повторного ввода пароля. Срок продлевается при работе."""
     login_max_failures: PositiveInt = 5
     """Неудачных попыток входа для пары «адрес + логин», после которых вход временно закрыт."""
+    login_max_failures_per_address: PositiveInt = 30
+    """Неудачных попыток входа с одного адреса (по любым логинам), после которых вход с него
+    временно закрыт. Защищает от перебора паролей ко многим учётным записям сразу."""
     login_window_minutes: PositiveInt = 15
 
     # ---------- Синхронизация досок ----------
@@ -106,6 +109,9 @@ class Settings(BaseSettings):
     процесса. В docker compose здесь том files-data, и путь задан в docker-compose.yml."""
     max_upload_mb: PositiveInt = 10
     """Наибольший размер одного файла, загружаемого на доску, в мегабайтах."""
+    max_board_files_mb: PositiveInt = 1024
+    """Сколько мегабайт файлов можно загрузить на одну доску. Предел не даёт одной доске
+    занять весь диск сервера."""
 
     # ---------- Журнал ----------
 
@@ -135,6 +141,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @property
+    def max_board_files_bytes(self) -> int:
+        return self.max_board_files_mb * 1024 * 1024
 
     @property
     def version_interval(self) -> timedelta:

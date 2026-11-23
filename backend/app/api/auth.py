@@ -60,9 +60,8 @@ async def login(
     settings: AppSettings,
 ) -> UserOut:
     login_name = normalize_login(body.login)
-    client = request.client.host if request.client else "unknown"
-    key = f"{client}:{login_name}"
-    if wait := throttle.retry_after(key):
+    address = request.client.host if request.client else "unknown"
+    if wait := throttle.retry_after(address, login_name):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "Слишком много попыток входа. Попробуйте позже.",
@@ -73,9 +72,9 @@ async def login(
     # Пароль проверяется и для несуществующего логина: время ответа не выдаёт, есть ли он.
     valid = await verify_password(user.password_hash if user else None, body.password)
     if user is None or not valid:
-        throttle.failed(key)
+        throttle.failed(address, login_name)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, WRONG_CREDENTIALS)
-    throttle.succeeded(key)
+    throttle.succeeded(address, login_name)
     if not user.is_active:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Учётная запись заблокирована. Обратитесь к администратору."
