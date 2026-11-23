@@ -1,9 +1,20 @@
-import { type Camera, initialCamera, panBy, screenToWorld, zoomAt } from '../canvas/camera';
+import {
+  type Camera,
+  type ScreenSize,
+  centerOn,
+  fitCamera,
+  initialCamera,
+  panBy,
+  screenToWorld,
+  visibleBounds,
+  zoomAt,
+} from '../canvas/camera';
 import { cloneElements } from '../model/clone';
 import { BoardDocument, type ElementSource } from '../model/document';
 import {
   bindEnd,
   contains,
+  contentBounds,
   distance,
   elementBounds,
   normalizeBounds,
@@ -32,17 +43,22 @@ import { commitStroke } from './smartDrawing';
 
 /** Фигуры, которые рисуются протягиванием рамки: все из каталога, кроме файлов. */
 export type ShapeTool = ToolKind;
-export type Tool = 'select' | 'pen' | 'arrow' | ShapeTool;
+/** comment ставит метку обсуждения: документ он не меняет, поэтому доступен и зрителю. */
+export type Tool = 'select' | 'pen' | 'arrow' | 'comment' | ShapeTool;
 
 function isShapeTool(tool: Tool): tool is ShapeTool {
-  return tool !== 'select' && tool !== 'pen' && tool !== 'arrow';
+  return tool !== 'select' && tool !== 'pen' && tool !== 'arrow' && tool !== 'comment';
+}
+
+/** Куда поставили метку обсуждения: точка страницы и верхний элемент под ней, если он есть. */
+export interface CommentPlace {
+  page: string;
+  point: Point;
+  element: BoardElement | undefined;
 }
 
 /** Размер холста в экранных пикселях. */
-export interface ViewportSize {
-  width: number;
-  height: number;
-}
+export type ViewportSize = ScreenSize;
 
 /**
  * Заготовка для инструмента фигуры: например, интерфейс — это класс с заранее
@@ -67,6 +83,10 @@ const HANDLE_SIZE_PX = 10;
 const BIND_DISTANCE_PX = 12;
 const MIN_SIZE = 8;
 const DUPLICATE_OFFSET = 24;
+/** Поля вокруг того, что показывают целиком, в пикселях экрана. */
+const FIT_PADDING_PX = 48;
+/** Насколько точка должна отстоять от края окна, чтобы считаться видной. */
+const SHOW_MARGIN_PX = 64;
 
 export interface PointerInput {
   button?: number;
@@ -132,8 +152,14 @@ export class Editor {
   /** Заготовка для следующей фигуры. Сбрасывается, когда фигура поставлена. */
   private preset: ShapePreset | null = null;
   private readonly listeners = new Set<() => void>();
+  private readonly commentListeners = new Set<(place: CommentPlace) => void>();
   /** Камеры страниц, на которых уже побывали: при возврате страница видна как прежде. */
   private readonly cameras = new Map<string, Camera>();
+  /**
+   * Камеру открытой страницы уже поставили: человек двигал доску или начал на ней работать,
+   * за кем-то следуют или страницу открыли переходом. Тогда revealContent её не трогает.
+   */
+  private cameraPlaced = false;
 
   constructor(doc: BoardDocument = new BoardDocument()) {
     this.doc = doc;
@@ -167,6 +193,14 @@ export class Editor {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  /** Подписка на метки обсуждений, которые ставят инструментом «Комментарий». */
+  onPlaceComment(listener: (place: CommentPlace) => void): () => void {
+    this.commentListeners.add(listener);
+    return () => {
+      this.commentListeners.delete(listener);
     };
   }
 
@@ -230,7 +264,9 @@ export class Editor {
     this.selection = new Set();
     this.cameras.set(this.pageId, this.camera);
     this.pageId = id;
-    this.camera = this.cameras.get(id) ?? initialCamera;
+    // Страница, открытая впервые, показывает своё содержимое целиком.
+    this.camera = this.cameras.get(id) ?? this.fittedCamera() ?? initialCamera;
+    this.cameraPlaced = true;
     this.emit();
   }
 
@@ -279,7 +315,7 @@ export class Editor {
 
   /** Выбирает инструмент. preset задаёт текст и размер новой фигуры, например для интерфейса. */
   setTool(tool: Tool, preset: ShapePreset | null = null): void {
-    if (this.readOnly && tool !== 'select') return;
+    if (this.readOnly && tool !== 'select' && tool !== 'comment') return;
     this.tool = tool;
     this.preset = isShapeTool(tool) ? preset : null;
     if (tool !== 'select') this.selection = new Set();
@@ -293,6 +329,7 @@ export class Editor {
 
   setCamera(camera: Camera): void {
     this.camera = camera;
+    this.cameraPlaced = true;
     this.emit();
   }
 
@@ -301,9 +338,79 @@ export class Editor {
     this.emit();
   }
 
+  /** Видимая часть страницы в мировых координатах; null, пока холст не показан. */
+  visibleArea(): Bounds | null {
+    const { width, height } = this.viewport;
+    return width > 0 && height > 0 ? visibleBounds(this.camera, this.viewport) : null;
+  }
+
   /** Середина видимой части холста в мировых координатах. */
   viewportCenter(): Point {
     return this.toWorld({ x: this.viewport.width / 2, y: this.viewport.height / 2 });
+  }
+
+  /** Меняет масштаб, а середина окна остаётся на месте. */
+  zoomBy(factor: number): void {
+    const middle = { x: this.viewport.width / 2, y: this.viewport.height / 2 };
+    this.setCamera(zoomAt(this.camera, middle, factor));
+  }
+
+  /** Масштаб 100% вокруг середины окна. */
+  resetZoom(): void {
+    this.zoomBy(1 / this.camera.zoom);
+  }
+
+  /** Ставит точку доски в середину окна, не меняя масштаб. */
+  centerOn(world: Point): void {
+    this.setCamera(centerOn(this.camera, world, this.viewport));
+  }
+
+  /**
+   * Открывает страницу page и, если точки там не видно, ставит её в середину окна.
+   * Точку у самого края тоже переносит: рядом с ней должно быть видно то, к чему она относится.
+   */
+  showPoint(page: string, point: Point): void {
+    this.setPage(page);
+    const area = this.visibleArea();
+    if (this.pageId !== page || !area) return;
+    const margin = this.px(SHOW_MARGIN_PX);
+    const inside =
+      point.x >= area.x + margin &&
+      point.x <= area.x + area.w - margin &&
+      point.y >= area.y + margin &&
+      point.y <= area.y + area.h - margin;
+    if (!inside) this.centerOn(point);
+  }
+
+  /** Показывает всё, что есть на странице. Мелкое не увеличивает больше 100%. */
+  zoomToFit(): void {
+    const camera = this.fittedCamera();
+    if (camera) this.setCamera(camera);
+  }
+
+  /**
+   * Показывает всё, что есть на открытой странице, если её камеру ещё никто не ставил.
+   * Так доска, загруженная с сервера, сразу показывает своё содержимое, где бы оно ни было.
+   */
+  revealContent(): void {
+    if (!this.cameraPlaced) this.zoomToFit();
+  }
+
+  /** Камера, при которой видно всё содержимое страницы; null, если смотреть не на что. */
+  private fittedCamera(): Camera | null {
+    const bounds = contentBounds(this.page.list(), this.lookup);
+    const { width, height } = this.viewport;
+    if (!bounds || width <= 0 || height <= 0) return null;
+    return fitCamera(bounds, this.viewport, FIT_PADDING_PX, 1);
+  }
+
+  /** Показывает выделенное во всё окно. Возвращает false, если ничего не выделено. */
+  zoomToSelection(): boolean {
+    const selected = [...this.selection].map(this.lookup).filter((el) => el !== undefined);
+    const bounds = contentBounds(selected, this.lookup);
+    if (!bounds) return false;
+    this.setCamera(fitCamera(bounds, this.viewport, FIT_PADDING_PX));
+    return true;
   }
 
   wheel(screen: Point, deltaX: number, deltaY: number, zoom: boolean): void {
@@ -387,6 +494,8 @@ export class Editor {
     const world = this.toWorld(screen);
     const button = input.button ?? 0;
     this.doc.stopCapturing();
+    // Человек уже работает с доской: камера не прыгнет, когда догрузится содержимое.
+    this.cameraPlaced = true;
 
     if (button === 1 || (button === 0 && this.spaceHeld)) {
       this.interaction = { type: 'pan', last: screen };
@@ -399,7 +508,17 @@ export class Editor {
     if (tool === 'pen') this.beginStroke(world);
     else if (tool === 'arrow') this.beginArrow(world);
     else if (tool === 'select') this.beginSelect(world, input.shift ?? false);
+    else if (tool === 'comment') this.placeComment(world);
     else if (isShapeTool(tool)) this.beginCreate(tool, world);
+  }
+
+  /** Метка ставится одним щелчком, после чего снова выбрано выделение. */
+  private placeComment(world: Point): void {
+    const place: CommentPlace = { page: this.pageId, point: world, element: this.elementAt(world) };
+    this.tool = 'select';
+    this.selection = new Set();
+    for (const listener of this.commentListeners) listener(place);
+    this.emit();
   }
 
   private beginCreate(kind: ShapeTool, world: Point): void {
@@ -778,6 +897,21 @@ export class Editor {
     // Элементы могли встать на другую страницу: например, их вставили, пока открыта была она.
     this.selection = new Set(elements.filter((el) => el.page === this.pageId).map((el) => el.id));
     this.emit();
+  }
+
+  /**
+   * Делает доску такой, как в версии (см. BoardDocument.restoreFrom): одна правка, которую
+   * отменяет Ctrl+Z. Набранный текст сохраняется до этого. Возвращает false, если доску
+   * сейчас править нельзя.
+   */
+  restoreVersion(version: BoardDocument): boolean {
+    if (this.readOnly) return false;
+    this.stopEditing();
+    this.interaction = { type: 'none' };
+    this.stroke = null;
+    this.marquee = null;
+    this.doc.restoreFrom(version);
+    return true;
   }
 
   undo(): void {

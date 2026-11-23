@@ -1,4 +1,5 @@
 import type { PathSink } from './pathSink';
+import { sectionHeight } from './textLayout';
 import type { Bounds, Point, ShapeKind } from './types';
 import { DEFAULT_FILL, DEFAULT_STICKY_FILL } from './types';
 
@@ -719,4 +720,9 @@ export function compartments(text: string): string[][] {
     else sections.at(-1)?.push(row);
   }
   return sections;
+}
+
+/** Высота класса или сущности, при которой видны все секции текста. */
+export function compartmentsHeight(text: string): number {
+  return compartments(text).reduce((height, rows) => height + sectionHeight(rows.length), 0);
 }

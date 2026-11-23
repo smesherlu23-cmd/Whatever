@@ -3,11 +3,15 @@ import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 import { reportSignedOut, syncUrl } from '../api';
+import { CommentStore } from '../comments/store';
 import { storageKeys } from '../config';
 import { Editor } from '../editor/Editor';
 import { BoardFiles } from '../files/boardFiles';
 import { BoardDocument } from '../model/document';
+import { VersionStore } from '../versions/store';
+import { Follow } from './follow';
 import { Presence } from './presence';
+import { syncPresence } from './syncPresence';
 
 export type ConnectionStatus =
   'connecting' | 'connected' | 'disconnected' | 'not-found' | 'forbidden';
@@ -18,6 +22,14 @@ const FORBIDDEN = 4403;
 const BOARD_NOT_FOUND = 4404;
 /** Права на доску изменились: клиент переподключится, и сервер проверит их заново. */
 const ACCESS_CHANGED = 4100;
+
+/**
+ * Сообщение сервера поверх протокола y-websocket: обсуждения доски изменились
+ * (COMMENTS_CHANGED в app/sync/room.py). Номер не совпадает с типами самого протокола.
+ */
+export const COMMENTS_CHANGED = 100;
+/** То же для истории версий доски (VERSIONS_CHANGED там же). */
+export const VERSIONS_CHANGED = 101;
 
 const isFinal = (status: ConnectionStatus) => status === 'not-found' || status === 'forbidden';
 
@@ -32,7 +44,10 @@ export class BoardSession {
   readonly doc = new Y.Doc();
   readonly editor: Editor;
   readonly presence: Presence;
+  readonly follow: Follow;
   readonly files: BoardFiles;
+  readonly comments: CommentStore;
+  readonly versions: VersionStore;
   private currentStatus: ConnectionStatus = 'connecting';
   private readonly listeners = new Set<() => void>();
 
@@ -42,7 +57,10 @@ export class BoardSession {
   ) {
     this.editor = new Editor(new BoardDocument(this.doc));
     this.presence = new Presence(this.doc.clientID, userName);
+    this.follow = new Follow(this.editor, this.presence);
     this.files = new BoardFiles(boardId);
+    this.comments = new CommentStore(boardId);
+    this.versions = new VersionStore(boardId);
   }
 
   get status(): ConnectionStatus {
@@ -65,7 +83,7 @@ export class BoardSession {
     const local = new IndexeddbPersistence(storageKeys.boardDocument(this.boardId), this.doc);
     const awareness = new Awareness(this.doc);
     const detachPresence = this.presence.attach(awareness);
-    const stopEditorSync = this.syncEditor();
+    const stopEditorSync = syncPresence(this.editor, this.presence, this.follow);
 
     // Коды закрытия 4400–4499 y-websocket считает окончательными и больше не переподключается.
     const provider = new WebsocketProvider(syncUrl(), this.boardId, this.doc, { awareness });
@@ -96,30 +114,35 @@ export class BoardSession {
       void local.clearData();
     });
 
+    // Доска открывается так, чтобы было видно её содержимое: по локальной копии, а если её
+    // ещё нет — по состоянию с сервера. Если человек уже двигал доску, камера остаётся.
+    const reveal = () => {
+      this.editor.revealContent();
+    };
+    local.once('synced', reveal);
+    // После каждого подключения обсуждения и версии перечитываются: без связи их изменения
+    // не доходили.
+    provider.on('sync', (synced: boolean) => {
+      if (!synced) return;
+      reveal();
+      this.comments.refresh();
+      this.versions.changed();
+    });
+    provider.messageHandlers[COMMENTS_CHANGED] = () => {
+      this.comments.refresh();
+    };
+    provider.messageHandlers[VERSIONS_CHANGED] = () => {
+      this.versions.changed();
+    };
+
     return () => {
+      this.follow.stop();
       stopEditorSync();
       detachPresence();
       provider.destroy();
       awareness.destroy();
       void local.destroy();
     };
-  }
-
-  /** Публикует открытую страницу и выделение редактора, когда они меняются. */
-  private syncEditor(): () => void {
-    let { pageId, selection } = this.editor;
-    this.presence.setPage(pageId);
-    this.presence.setSelection(selection);
-    return this.editor.subscribe(() => {
-      if (this.editor.pageId !== pageId) {
-        pageId = this.editor.pageId;
-        this.presence.setPage(pageId);
-      }
-      if (this.editor.selection !== selection) {
-        selection = this.editor.selection;
-        this.presence.setSelection(selection);
-      }
-    });
   }
 
   private setStatus(status: ConnectionStatus): void {

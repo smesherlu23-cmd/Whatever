@@ -8,6 +8,7 @@ import {
   DEFAULT_STROKE,
   type ShapeElement,
 } from '../model/types';
+import { type Call, recordingContext } from '../testing/canvas';
 import { renderBoard } from './render';
 import type { Theme } from './scene';
 
@@ -27,27 +28,6 @@ const theme: Theme = {
 };
 
 const frame = { width: 800, height: 600, dpr: 1, theme };
-
-type Call = [method: string, ...args: unknown[]];
-
-/** Подделка 2D-контекста: запоминает вызовы методов, присваивания свойств игнорирует. */
-function recordingContext(): { ctx: CanvasRenderingContext2D; calls: Call[] } {
-  const calls: Call[] = [];
-  const ctx = new Proxy(
-    { measureText: (text: string) => ({ width: text.length * 8 }) },
-    {
-      get(target, prop) {
-        if (prop === 'measureText') return target.measureText;
-        return (...args: unknown[]) => calls.push([String(prop), ...args]);
-      },
-      set(_target, prop, value) {
-        calls.push([`set ${String(prop)}`, value]);
-        return true;
-      },
-    },
-  ) as unknown as CanvasRenderingContext2D;
-  return { ctx, calls };
-}
 
 function shape(id: string, x: number, y: number, extra: Partial<ShapeElement> = {}): ShapeElement {
   return {
@@ -190,6 +170,7 @@ describe('renderBoard', () => {
       color: '#d1495b',
       page: 'main',
       cursor: { x: 100, y: 100 },
+      view: null,
       selection: [],
     };
     const { ctx, calls } = recordingContext();

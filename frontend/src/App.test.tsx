@@ -14,6 +14,7 @@ const BOARD: BoardInfo = {
   owner: { id: MEMBER.id, login: MEMBER.login, name: MEMBER.name },
   folder_id: null,
   access: 'manage',
+  is_template: false,
   created_at: '2026-11-20',
   updated_at: '2026-11-20',
 };

@@ -3,9 +3,26 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
-from app.api import admin, auth, boards, files, folders, health, sharing, sync, users
+from app.api import (
+    admin,
+    auth,
+    boards,
+    comments,
+    files,
+    folders,
+    health,
+    notifications,
+    sharing,
+    sync,
+    templates,
+    users,
+    versions,
+)
 from app.auth.dependencies import same_origin
 from app.auth.throttle import LoginThrottle
 from app.core.config import Settings, get_settings
@@ -13,6 +30,19 @@ from app.core.db import Database
 from app.files import FileStore
 from app.sync.room import RoomManager, SavePolicy
 from app.sync.sockets import BoardSockets
+
+
+async def validation_failed(_request: Request, error: RequestValidationError) -> JSONResponse:
+    """Ответ 422, как у FastAPI, но без присланных значений.
+
+    Среди них бывают NaN и бесконечности: в JSON их нет, и ответ FastAPI с ними не собирается,
+    так что вместо 422 клиент получил бы 500. А пароль из неудачного запроса незачем
+    отправлять обратно.
+    """
+    errors = [{key: value for key, value in e.items() if key != "input"} for e in error.errors()]
+    return JSONResponse(
+        {"detail": jsonable_encoder(errors)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,7 +59,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rooms = RoomManager(
             database.sessions,
             SavePolicy(
-                delay=config.sync_save_delay_seconds, compact_after=config.sync_compact_after
+                delay=config.sync_save_delay_seconds,
+                compact_after=config.sync_compact_after,
+                version_interval=config.version_interval,
+                version_retention=config.version_retention,
             ),
         )
         app.state.database = database
@@ -48,14 +81,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Whatever API", version="0.1.0", lifespan=lifespan)
     app.state.settings = config
+    app.exception_handler(RequestValidationError)(validation_failed)
     app.include_router(health.router, prefix="/api")
     # Изменяющие запросы принимаются только со страниц самого приложения.
     for router in (
         auth.router,
         boards.router,
+        comments.router,
+        notifications.router,
         files.router,
         folders.router,
         sharing.router,
+        templates.router,
+        versions.router,
         users.router,
         admin.router,
     ):

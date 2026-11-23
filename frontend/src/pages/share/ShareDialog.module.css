@@ -67,7 +67,14 @@
   gap: 8px;
 }
 
-.form select:first-child {
+.form select:first-child,
+.form input:first-child {
   flex: 1;
   min-width: 0;
+}
+
+.note {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
 }

@@ -66,7 +66,7 @@ async def board_socket(websocket: WebSocket, board_id: uuid.UUID) -> None:
         return
 
     await websocket.accept()
-    conn = Connection(websocket.send_bytes, can_edit=admitted.can_edit)
+    conn = Connection(websocket.send_bytes, admitted.user_id, can_edit=admitted.can_edit)
     with sockets.track(
         websocket, user_id=admitted.user_id, token=admitted.token, board_id=board_id
     ):

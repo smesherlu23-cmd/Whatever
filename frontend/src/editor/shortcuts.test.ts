@@ -59,4 +59,24 @@ describe('keyboard shortcuts', () => {
     expect(editor.selection.size).toBe(0);
     expect(editor.keyDown({ key: 'Enter' })).toBe(false);
   });
+
+  it('zooms with Ctrl and the plus or minus key, and fits the view with Shift and a digit', () => {
+    const editor = editorWithRectangle();
+    editor.setViewport({ width: 800, height: 600 });
+    expect(editor.keyDown({ key: '=', code: 'Equal', ctrl: true })).toBe(true);
+    expect(editor.camera.zoom).toBe(1.25);
+    editor.keyDown({ key: '-', code: 'Minus', ctrl: true });
+    editor.keyDown({ key: '-', code: 'Minus', ctrl: true });
+    expect(editor.camera.zoom).toBeCloseTo(0.8);
+    expect(editor.keyDown({ key: ')', code: 'Digit0', shift: true })).toBe(true);
+    expect(editor.camera.zoom).toBeCloseTo(1);
+
+    editor.keyDown({ key: '!', code: 'Digit1', shift: true });
+    // Прямоугольник 160×80 целиком в окне и посередине, но не крупнее 100%.
+    expect(editor.camera.zoom).toBe(1);
+    expect(editor.viewportCenter()).toEqual({ x: 0, y: 0 });
+
+    editor.keyDown({ key: '@', code: 'Digit2', shift: true });
+    expect(editor.camera.zoom).toBeGreaterThan(1);
+  });
 });

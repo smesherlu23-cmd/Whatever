@@ -42,6 +42,7 @@ describe('AuthGate', () => {
   it('asks to log in and then shows the app', async () => {
     const fetch = stubServer((_method, path, body) => {
       if (path === '/auth/me') return failure(401, 'Нужно войти в систему');
+      if (path === '/notifications') return Response.json({ unread: 0, items: [] });
       expect(body).toEqual({ login: 'ivan', password: 'correct-horse' });
       return Response.json(MEMBER);
     });
@@ -49,7 +50,12 @@ describe('AuthGate', () => {
     await logIn('ivan', 'correct-horse');
 
     expect(await screen.findByText('Привет, Иван Петров')).toBeTruthy();
-    expect(fetch).toHaveBeenCalledTimes(2);
+    // Вошедший сразу узнаёт о своих уведомлениях.
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      '/api/auth/me',
+      '/api/auth/login',
+      '/api/notifications',
+    ]);
     expect(rememberedUser()).toEqual(MEMBER);
   });
 

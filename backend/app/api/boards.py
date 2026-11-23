@@ -1,12 +1,13 @@
-"""Доски: список, создание, переименование, перенос в папку и удаление."""
+"""Доски: список, создание (в том числе из шаблона), переименование, перенос в папку,
+содержимое целиком и удаление."""
 
 import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Self
 
-from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field, model_validator
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from pydantic import Base64Bytes, BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
@@ -22,6 +23,14 @@ from app.auth.dependencies import (
     OpenSockets,
     ViewableBoard,
     admin_user,
+)
+from app.board_content import (
+    MAX_CONTENT_BYTES,
+    InvalidContentError,
+    check_content,
+    read_state,
+    save_board,
+    save_copy,
 )
 from app.core.db import DbSession
 from app.models import Board, User
@@ -41,6 +50,7 @@ class BoardOut(BaseModel):
     # Папка в списке владельца. Остальным она не видна и не важна.
     folder_id: uuid.UUID | None
     access: Access
+    is_template: bool
     created_at: datetime
     updated_at: datetime
 
@@ -53,14 +63,27 @@ def board_out(board: Board, user: User, access: Access) -> BoardOut:
         owner=Person.model_validate(board.owner) if board.owner else None,
         folder_id=board.folder_id if board.owner_id == user.id else None,
         access=access,
+        is_template=board.is_template,
         created_at=board.created_at,
         updated_at=board.updated_at,
     )
 
 
 class BoardCreate(BaseModel):
+    """Новая доска: пустая, с содержимым из браузера (так создаются доски по встроенным
+    шаблонам: их собирает клиент) или копия шаблона компании."""
+
     name: BoardName = "Новая доска"
     folder_id: uuid.UUID | None = None
+    # Состояние документа Yjs в base64.
+    content: Annotated[Base64Bytes, Field(max_length=MAX_CONTENT_BYTES)] | None = None
+    template_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        if self.content is not None and self.template_id is not None:
+            raise ValueError("Доска создаётся либо из содержимого, либо из шаблона")
+        return self
 
 
 class BoardUpdate(BaseModel):
@@ -87,21 +110,44 @@ async def list_boards(
         return [board_out(board, user, access) for board, access in await visible_boards(db, user)]
     admin = await admin_user(user)
     boards = await db.scalars(
-        select(Board).options(joinedload(Board.owner)).order_by(Board.updated_at.desc())
+        select(Board)
+        .options(joinedload(Board.owner))
+        .where(Board.is_template.is_(False))
+        .order_by(Board.updated_at.desc())
     )
     return [board_out(board, admin, Access.MANAGE) for board in boards]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_board(body: BoardCreate, user: CurrentUser, db: DbSession) -> BoardOut:
+async def create_board(
+    body: BoardCreate,
+    user: CurrentUser,
+    db: DbSession,
+    rooms: OpenRooms,
+    files: FileStorage,
+) -> BoardOut:
     if body.folder_id is not None:
         await own_folder(db, user, body.folder_id)
     now = datetime.now(UTC)
     board = Board(
         name=body.name, owner=user, folder_id=body.folder_id, created_at=now, updated_at=now
     )
-    db.add(board)
-    await db.commit()
+    if body.template_id is not None:
+        template = await db.get(Board, body.template_id)
+        if template is None or not template.is_template:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Шаблон не найден")
+        # Шаблон могут править прямо сейчас: копия берёт и то, что ещё не записано.
+        await rooms.flush(template.id)
+        await save_copy(db, files, board, template.id)
+    else:
+        if body.content is not None:
+            try:
+                await check_content(body.content)
+            except InvalidContentError as error:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, "Содержимое доски повреждено"
+                ) from error
+        await save_board(db, board, body.content)
     return board_out(board, user, Access.MANAGE)
 
 
@@ -110,10 +156,21 @@ async def get_board(target: ViewableBoard) -> BoardOut:
     return board_out(target.board, target.user, target.access)
 
 
+@router.get("/{board_id}/content")
+async def get_content(target: ViewableBoard, db: DbSession) -> Response:
+    """Содержимое доски одним обновлением Yjs: по нему браузер рисует превью шаблона."""
+    state = await read_state(db, target.board.id)
+    return Response(
+        state, media_type="application/octet-stream", headers={"Cache-Control": "no-store"}
+    )
+
+
 @router.patch("/{board_id}")
 async def update_board(target: EditableBoard, body: BoardUpdate, db: DbSession) -> BoardOut:
     board, user = target.board, target.user
     if "folder_id" in body.model_fields_set:
+        if board.is_template:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Шаблоны не раскладываются по папкам")
         # Папки личные, поэтому раскладывать доску по ним может только владелец.
         if board.owner_id != user.id:
             raise HTTPException(

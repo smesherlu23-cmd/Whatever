@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 
-/** Что показывает список досок: свои по папкам, доступные от коллег или все (администратору). */
+/**
+ * Что показывает список досок: свои по папкам, доступные от коллег, шаблоны компании
+ * или все доски (администратору).
+ */
 export type BoardsView =
-  { view: 'mine'; folderId: string | null } | { view: 'shared' } | { view: 'all' };
+  | { view: 'mine'; folderId: string | null }
+  | { view: 'shared' }
+  | { view: 'templates' }
+  | { view: 'all' };
 
 export type Route =
   | ({ page: 'boards' } & BoardsView)
-  | { page: 'board'; boardId: string }
+  /** threadId — обсуждение, открытое на доске: ссылкой на него делятся и по ней переходят. */
+  | { page: 'board'; boardId: string; threadId: string | null }
   | { page: 'join'; token: string }
   | { page: 'account' }
   | { page: 'admin' }
@@ -21,9 +28,13 @@ export function navigate(path: string, { replace = false }: { replace?: boolean 
 
 /** Адрес списка досок для выбранного вида. Обратная операция к разбору в parseRoute. */
 export function boardsPath(view: BoardsView): string {
-  if (view.view === 'shared') return '/?view=shared';
-  if (view.view === 'all') return '/?view=all';
+  if (view.view !== 'mine') return `/?view=${view.view}`;
   return view.folderId ? `/?folder=${view.folderId}` : '/';
+}
+
+/** Адрес доски, а с threadId — доски с открытым обсуждением. */
+export function boardPath(boardId: string, threadId: string | null = null): string {
+  return threadId ? `/b/${boardId}?thread=${threadId}` : `/b/${boardId}`;
 }
 
 const currentLocation = () => window.location.pathname + window.location.search;
@@ -45,13 +56,14 @@ export function useLocation(): string {
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const BOARD = new RegExp(`^/b/(${UUID})$`, 'i');
-const FOLDER = new RegExp(`^${UUID}$`, 'i');
+const ID = new RegExp(`^${UUID}$`, 'i');
 const JOIN = /^\/s\/([A-Za-z0-9_-]{16,64})$/;
 
 /**
- * «/» — свои доски (в папке — «/?folder=<id>», доступные — «/?view=shared», все — «/?view=all»),
- * «/b/<id>» — доска, «/s/<токен>» — ссылка доступа, «/account» — учётная запись,
- * «/admin» — пользователи.
+ * «/» — свои доски (в папке — «/?folder=<id>», доступные — «/?view=shared», шаблоны —
+ * «/?view=templates», все — «/?view=all»),
+ * «/b/<id>» — доска (с открытым обсуждением — «/b/<id>?thread=<id>»), «/s/<токен>» — ссылка
+ * доступа, «/account» — учётная запись, «/admin» — пользователи.
  */
 export function parseRoute(location: string): Route {
   const url = new URL(location, 'http://app.invalid');
@@ -60,7 +72,10 @@ export function parseRoute(location: string): Route {
   if (path === '/account') return { page: 'account' };
   if (path === '/admin') return { page: 'admin' };
   const board = BOARD.exec(path)?.[1];
-  if (board) return { page: 'board', boardId: board };
+  if (board) {
+    const thread = url.searchParams.get('thread');
+    return { page: 'board', boardId: board, threadId: thread && ID.test(thread) ? thread : null };
+  }
   const token = JOIN.exec(path)?.[1];
   if (token) return { page: 'join', token };
   return { page: 'not-found' };
@@ -68,7 +83,7 @@ export function parseRoute(location: string): Route {
 
 function parseBoardsView(params: URLSearchParams): BoardsView {
   const view = params.get('view');
-  if (view === 'shared' || view === 'all') return { view };
+  if (view === 'shared' || view === 'templates' || view === 'all') return { view };
   const folder = params.get('folder');
-  return { view: 'mine', folderId: folder && FOLDER.test(folder) ? folder : null };
+  return { view: 'mine', folderId: folder && ID.test(folder) ? folder : null };
 }

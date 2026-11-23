@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     sync_compact_after: PositiveInt = 50
     """Сколько записей истории доски копить, прежде чем сжать их в один снимок."""
 
+    # ---------- История версий ----------
+
+    version_interval_minutes: PositiveInt = 10
+    """Пока доску меняют, её версия сохраняется сама раз в столько минут, а ещё когда все
+    участники с неё ушли."""
+    version_retention_days: PositiveInt = 30
+    """Сколько дней хранятся автоматические версии. Названные хранятся, пока их не удалят."""
+
     # ---------- Файлы ----------
 
     files_dir: Path = Path("data/files")
@@ -127,6 +135,14 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @property
+    def version_interval(self) -> timedelta:
+        return timedelta(minutes=self.version_interval_minutes)
+
+    @property
+    def version_retention(self) -> timedelta:
+        return timedelta(days=self.version_retention_days)
 
 
 @lru_cache

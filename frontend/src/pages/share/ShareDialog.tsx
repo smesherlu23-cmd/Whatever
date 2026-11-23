@@ -10,8 +10,10 @@ import {
   errorText,
   shareUrl,
 } from '../../api';
+import { boardsPath } from '../../router';
 import controls from '../../ui/controls.module.css';
 import { Dialog } from '../../ui/Dialog';
+import { Link } from '../../ui/Link';
 import styles from './ShareDialog.module.css';
 
 export const ROLE_TEXT: Record<BoardRole, string> = {
@@ -37,8 +39,9 @@ interface Message {
 const FAILED = 'Не удалось сохранить. Проверьте связь с сервером.';
 
 /**
- * Окно «Поделиться»: участники доски с правом просмотра или редактирования и ссылки доступа.
- * Открывается только у тех, кто управляет доской; права всё равно проверяет сервер.
+ * Окно «Поделиться»: участники доски с правом просмотра или редактирования, ссылки доступа
+ * и сохранение копии доски шаблоном компании. Открывается только у тех, кто управляет
+ * доской; права всё равно проверяет сервер.
  */
 export function ShareDialog({
   board,
@@ -120,7 +123,16 @@ export function ShareDialog({
     });
 
   return (
-    <Dialog title={`Доступ к доске «${board.name}»`} onClose={onClose}>
+    <Dialog
+      title={`Доступ к ${board.is_template ? 'шаблону' : 'доске'} «${board.name}»`}
+      onClose={onClose}
+    >
+      {board.is_template && (
+        <p className={styles.note}>
+          Это шаблон компании: его видят все сотрудники. Менять шаблон могут участники с правом
+          редактирования.
+        </p>
+      )}
       {message && (
         <p
           className={message.ok ? controls.success : controls.error}
@@ -194,6 +206,8 @@ export function ShareDialog({
           </section>
         </>
       )}
+
+      {!board.is_template && <SaveTemplate board={board} />}
     </Dialog>
   );
 }
@@ -365,5 +379,64 @@ function NewLink({ onCreate }: { onCreate: (role: BoardRole, days: number) => vo
         Создать ссылку
       </button>
     </form>
+  );
+}
+
+/**
+ * Сохранение копии доски шаблоном компании. Итог показывается здесь же, а не вверху окна:
+ * раздел внизу, и сообщение вверху легко не заметить.
+ */
+function SaveTemplate({ board }: { board: BoardInfo }) {
+  const [name, setName] = useState(board.name);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<BoardInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: SubmitEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setSaved(await api.saveTemplate(board.id, trimmed));
+    } catch (failure) {
+      setError(errorText(failure, FAILED));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className={styles.section} aria-labelledby="share-template">
+      <h3 id="share-template">Шаблон компании</h3>
+      <p className={controls.muted}>
+        Копия доски станет шаблоном: его увидят все сотрудники и смогут создавать по нему свои
+        доски. Сама доска останется как есть.
+      </p>
+      <form className={styles.form} onSubmit={(e) => void submit(e)}>
+        <input
+          className={controls.input}
+          aria-label="Название шаблона"
+          value={name}
+          maxLength={200}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button type="submit" className={controls.secondary} disabled={saving || !name.trim()}>
+          Сохранить шаблоном
+        </button>
+      </form>
+      {saved && (
+        <p className={controls.success} role="status">
+          Шаблон «{saved.name}» сохранён.{' '}
+          <Link to={boardsPath({ view: 'templates' })}>Все шаблоны</Link>
+        </p>
+      )}
+      {error && (
+        <p className={controls.error} role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }

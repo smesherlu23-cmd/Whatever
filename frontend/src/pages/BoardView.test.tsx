@@ -1,24 +1,19 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Follow } from '../collab/follow';
 import { Editor } from '../editor/Editor';
 import { BoardFiles } from '../files/boardFiles';
 import type { UploadedFile } from '../api';
+import { BoardDocument } from '../model/document';
+import { enableCanvas } from '../testing/canvas';
 import { deferred, defined, shapes } from '../testing/helpers';
+import { participant, relay } from '../testing/peers';
+import { Dialog } from '../ui/Dialog';
 import { BoardView } from './BoardView';
 
 describe('BoardView text editing', () => {
   beforeEach(() => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      new Proxy({}, { get: () => () => ({ width: 0 }) }) as CanvasRenderingContext2D,
-    );
-    HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe = vi.fn();
-        disconnect = vi.fn();
-      },
-    );
+    enableCanvas();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -68,5 +63,75 @@ describe('BoardView text editing', () => {
     expect(alert.textContent).toContain('Не удалось вставить «отчёт.pdf». Нет связи с сервером.');
     fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('zooms with the buttons and remembers whether the minimap is shown', () => {
+    localStorage.removeItem('whatever-minimap');
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    render(<BoardView editor={editor} files={new BoardFiles('b1')} header={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Увеличить' }));
+    expect(editor.camera.zoom).toBe(1.25);
+    fireEvent.click(screen.getByRole('button', { name: 'Уменьшить' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Уменьшить' }));
+    expect(screen.getByRole('button', { name: 'Масштаб 80%, вернуть 100%' })).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Масштаб 80%, вернуть 100%' }));
+    expect(editor.camera.zoom).toBeCloseTo(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Показать всё' }));
+
+    expect(screen.getByLabelText('Мини-карта: щелчок переносит сюда вид')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Мини-карта' }));
+    expect(screen.queryByLabelText('Мини-карта: щелчок переносит сюда вид')).toBeNull();
+    expect(localStorage.getItem('whatever-minimap')).toBe('false');
+  });
+
+  it('says whom the user follows and stops on Esc, the button or a click on the board', () => {
+    const me = participant('Борис');
+    const alice = participant('Алиса');
+    alice.presence.setView({ x: 0, y: 0, w: 1600, h: 1200 });
+    relay(alice, me);
+    const editor = new Editor(new BoardDocument(me.ydoc));
+    editor.setViewport({ width: 800, height: 600 });
+    const follow = new Follow(editor, me.presence);
+    render(
+      <BoardView
+        editor={editor}
+        presence={me.presence}
+        follow={follow}
+        files={new BoardFiles('b1')}
+        header={null}
+      />,
+    );
+    const notice = () => screen.queryByText('Вы видите то же, что и Алиса');
+    const start = () => {
+      act(() => {
+        follow.start(alice.id);
+      });
+      expect(notice()).not.toBeNull();
+    };
+
+    start();
+    expect(editor.camera.zoom).toBe(0.5);
+    // Esc в открытом окне закрывает только окно.
+    const dialog = render(
+      <Dialog title="Экспорт" onClose={vi.fn()}>
+        <button type="button">Скачать</button>
+      </Dialog>,
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Скачать' }), { key: 'Escape' });
+    expect(notice()).not.toBeNull();
+    dialog.unmount();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(notice()).toBeNull();
+
+    start();
+    fireEvent.click(screen.getByRole('button', { name: 'Перестать следовать' }));
+    expect(notice()).toBeNull();
+
+    start();
+    fireEvent.pointerDown(screen.getByLabelText('Холст доски'), { button: 0 });
+    expect(follow.leader).toBeNull();
+    expect(notice()).toBeNull();
   });
 });

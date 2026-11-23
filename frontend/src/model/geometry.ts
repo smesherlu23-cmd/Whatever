@@ -41,6 +41,12 @@ export function boundsOf(points: readonly Point[]): Bounds {
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
+/** Одна и та же рамка; null равен только null. */
+export function sameBounds(a: Bounds | null, b: Bounds | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
 export function center(b: Bounds): Point {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }

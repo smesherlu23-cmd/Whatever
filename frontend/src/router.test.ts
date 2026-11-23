@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { type BoardsView, boardsPath, parseRoute } from './router';
+import { type BoardsView, boardPath, boardsPath, parseRoute } from './router';
 
 const BOARD_ID = '0b7d2d4e-1c2a-4c49-9d6f-1f2e3d4c5b6a';
+const THREAD_ID = '6f1c0e2a-9b3d-4e5f-8a7b-0c1d2e3f4a5b';
 const TOKEN = 'h3Kq9-x_Vb2mN7pLr4sT1uWy';
 
 describe('parseRoute', () => {
@@ -11,8 +12,13 @@ describe('parseRoute', () => {
     ['/?folder=../etc', { page: 'boards', view: 'mine', folderId: null }],
     ['/?view=shared', { page: 'boards', view: 'shared' }],
     ['/?view=all', { page: 'boards', view: 'all' }],
-    [`/b/${BOARD_ID}`, { page: 'board', boardId: BOARD_ID }],
-    [`/b/${BOARD_ID}/`, { page: 'board', boardId: BOARD_ID }],
+    [`/b/${BOARD_ID}`, { page: 'board', boardId: BOARD_ID, threadId: null }],
+    [`/b/${BOARD_ID}/`, { page: 'board', boardId: BOARD_ID, threadId: null }],
+    [
+      `/b/${BOARD_ID}?thread=${THREAD_ID}`,
+      { page: 'board', boardId: BOARD_ID, threadId: THREAD_ID },
+    ],
+    [`/b/${BOARD_ID}?thread=1`, { page: 'board', boardId: BOARD_ID, threadId: null }],
     [`/s/${TOKEN}`, { page: 'join', token: TOKEN }],
     ['/s/short', { page: 'not-found' }],
     ['/account', { page: 'account' }],
@@ -30,5 +36,13 @@ describe('parseRoute', () => {
     { view: 'all' },
   ])('builds the list address that it reads back: %o', (view) => {
     expect(parseRoute(boardsPath(view))).toEqual({ page: 'boards', ...view });
+  });
+
+  it.each([null, THREAD_ID])('builds the board address that it reads back: %s', (threadId) => {
+    expect(parseRoute(boardPath(BOARD_ID, threadId))).toEqual({
+      page: 'board',
+      boardId: BOARD_ID,
+      threadId,
+    });
   });
 });

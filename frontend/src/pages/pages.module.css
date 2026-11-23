@@ -15,41 +15,79 @@
 }
 
 .main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Холст и всё, что лежит поверх него. Боковая панель стоит рядом и делает его уже. */
+.stage {
   position: relative;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
+/*
+ * Полоса во всю ширину холста, панель в ней по центру. Сама полоса нажатий не ловит: под ней
+ * холст. По центру панель ставят поля auto, а не justify-content: если панель шире полосы,
+ * поля обнуляются, и она начинается от левого края полосы, а не уходит за него.
+ */
 .toolbar {
   position: absolute;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 16px;
+  left: 16px;
+  display: flex;
+  pointer-events: none;
+}
+
+.toolbar > * {
+  margin-inline: auto;
+  pointer-events: auto;
+}
+
+/* Панель зрителя: менять доску нельзя, а обсуждать можно. */
+.viewerBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
 }
 
 .readOnly {
   margin: 0;
-  padding: 8px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
+  padding: 4px 10px 4px 6px;
   color: var(--text-muted);
   font-size: 13px;
-  box-shadow: var(--shadow);
 }
 
-/* Сообщение о загрузке файлов под панелью инструментов. */
-.notice {
+/* Сообщения под панелью инструментов: за кем следуют, загрузка файлов, ошибки. */
+.notices {
   position: absolute;
   top: 72px;
   left: 50%;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(560px, calc(100% - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.notice {
+  display: flex;
   align-items: center;
   gap: 12px;
-  max-width: min(560px, calc(100% - 32px));
+  max-width: 100%;
   margin: 0;
   padding: 8px 8px 8px 14px;
-  transform: translateX(-50%);
+  pointer-events: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-panel);
@@ -75,16 +113,31 @@
   background: var(--bg-hover);
 }
 
-.zoom {
+.noticeDot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: -4px;
+  border-radius: 50%;
+}
+
+/* Рамка цвета участника, за которым следуют. */
+.followFrame {
+  position: absolute;
+  inset: 0;
+  border: 3px solid;
+  pointer-events: none;
+}
+
+/* Мини-карта и масштаб в правом нижнем углу. */
+.navigator {
   position: absolute;
   right: 16px;
   bottom: 16px;
-  padding: 4px 8px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .logo {
@@ -114,31 +167,34 @@
   font-size: 13px;
 }
 
+.badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Число открытых обсуждений на кнопке. */
+.counter {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bg-active);
+  color: var(--text-on-active);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
 .status[data-status='disconnected'] {
   color: var(--warning);
 }
 
 .spacer {
   flex: 1;
-}
-
-.peers {
-  display: flex;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.peers li {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .page {
@@ -175,6 +231,11 @@
 
 .boards li:first-child {
   border-top: 0;
+}
+
+/* Кнопки справа от названия не прижимаются к рамке списка. */
+.boards li > :last-child:not(a) {
+  margin-right: 8px;
 }
 
 .boards a {

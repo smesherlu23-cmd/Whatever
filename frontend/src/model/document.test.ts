@@ -1,5 +1,5 @@
 import * as Y from 'yjs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BoardDocument, DEFAULT_PAGE_NAME } from './document';
 import { type ArrowElement, DEFAULT_PAGE, type ShapeElement } from './types';
 
@@ -221,6 +221,33 @@ describe('BoardDocument pages', () => {
     expect(doc.duplicatePage('missing', 'Копия')).toBeNull();
   });
 
+  it('skips entries of another client that are not maps instead of failing', () => {
+    const doc = new BoardDocument();
+    doc.add(rect('a'));
+    const second = doc.addPage('Вторая');
+    doc.doc.transact(() => {
+      doc.doc.getMap('elements').set('number', 5);
+      doc.doc.getMap('elements').set('plain', { id: 'plain', kind: 'rectangle' });
+      doc.doc.getMap('pages').set('text', 'страница');
+      doc.doc.getMap('pages').set(DEFAULT_PAGE, 7);
+    });
+
+    expect(doc.list().map((el) => el.id)).toEqual(['a']);
+    expect(doc.pages().map((page) => page.id)).toEqual([second]);
+    doc.update('number', { x: 1 });
+    doc.renamePage('text', 'Другое');
+    expect(doc.removePage(second)).toBe(false);
+    expect(doc.doc.getMap('elements').get('number')).toBe(5);
+  });
+
+  it('writes a real default page over a broken entry when the pages are written down', () => {
+    const doc = new BoardDocument();
+    doc.doc.getMap('pages').set(DEFAULT_PAGE, 7);
+    expect(doc.pages().map((page) => page.id)).toEqual([DEFAULT_PAGE]);
+    doc.addPage('Вторая');
+    expect(doc.pages().map((page) => page.name)).toEqual([DEFAULT_PAGE_NAME, 'Вторая']);
+  });
+
   it('notifies about changes of pages as well as of elements', () => {
     const doc = new BoardDocument();
     let calls = 0;
@@ -232,5 +259,117 @@ describe('BoardDocument pages', () => {
     off();
     doc.addPage('Третья');
     expect(calls).toBe(2);
+  });
+});
+
+describe('BoardDocument.restoreFrom', () => {
+  /** Версия доски: её копия в момент сохранения. */
+  function versionOf(board: BoardDocument): BoardDocument {
+    const version = new BoardDocument();
+    Y.applyUpdate(version.doc, Y.encodeStateAsUpdate(board.doc));
+    return version;
+  }
+
+  const fieldsOf = (doc: BoardDocument, id: string) =>
+    doc.doc.getMap<Y.Map<unknown>>('elements').get(id);
+
+  it('brings back the elements and pages of the version', () => {
+    const doc = new BoardDocument();
+    doc.add(rect('kept'));
+    doc.add({ ...rect('moved'), z: 2 });
+    doc.add({ ...rect('removed'), z: 3 });
+    const version = versionOf(doc);
+
+    doc.update('moved', { x: 300, text: 'Новое' });
+    fieldsOf(doc, 'kept')?.set('note', 'лишнее поле');
+    doc.remove(['removed']);
+    doc.add({ ...rect('added'), z: 4 });
+    const second = doc.addPage('Вторая');
+    doc.restoreFrom(version);
+
+    expect(doc.list()).toEqual(version.list());
+    expect(fieldsOf(doc, 'kept')?.has('note')).toBe(false);
+    expect(doc.pages()).toEqual(version.pages());
+    expect(doc.hasPage(second)).toBe(false);
+
+    const withPages = versionOf(doc);
+    const renamed = withPages.addPage('Из версии');
+    doc.restoreFrom(withPages);
+    expect(doc.pages().map((page) => page.id)).toEqual([DEFAULT_PAGE, renamed]);
+  });
+
+  it('is one step of undo, which brings back the board as it was', () => {
+    const doc = new BoardDocument();
+    doc.add(rect('a'));
+    const version = versionOf(doc);
+    doc.stopCapturing();
+    doc.update('a', { x: 300 });
+    doc.add({ ...rect('b'), z: 2 });
+    const before = doc.list();
+
+    doc.restoreFrom(version);
+    doc.update('a', { text: 'После восстановления' });
+    expect(doc.list().map((el) => el.id)).toEqual(['a']);
+    doc.undo();
+    doc.undo();
+    expect(doc.list()).toEqual(before);
+    doc.redo();
+    expect(doc.list()).toEqual(version.list());
+  });
+
+  it('changes only what differs, so a colleague editing the rest keeps the edit', () => {
+    const alice = new BoardDocument();
+    alice.add(rect('a'));
+    alice.add({ ...rect('b'), z: 2 });
+    const version = versionOf(alice);
+    alice.update('b', { x: 500 });
+    const bob = versionOf(alice);
+
+    alice.restoreFrom(version);
+    bob.update('a', { text: 'Шлюз' });
+    Y.applyUpdate(alice.doc, Y.encodeStateAsUpdate(bob.doc));
+    Y.applyUpdate(bob.doc, Y.encodeStateAsUpdate(alice.doc));
+
+    for (const doc of [alice, bob]) {
+      expect(doc.get('a')).toMatchObject({ text: 'Шлюз', x: 0 });
+      expect(doc.get('b')).toMatchObject({ x: 0 });
+    }
+  });
+
+  it('changes nothing when the board already looks like the version', () => {
+    const doc = new BoardDocument();
+    doc.add({ ...rect('sketch'), kind: 'path', points: [0, 0, 0.5, 1, 1, 0] });
+    doc.add({
+      ...rect('picture'),
+      kind: 'image',
+      file: { id: 'f1', name: 'a.png', size: 1, type: 'image/png' },
+    });
+    const version = versionOf(doc);
+    const changed = vi.fn();
+    doc.onChange(changed);
+    doc.restoreFrom(version);
+    expect(changed).not.toHaveBeenCalled();
+
+    fieldsOf(doc, 'sketch')?.set('points', [0, 0, 1, 1]);
+    fieldsOf(doc, 'picture')?.set('file', { id: 'f2', name: 'a.png', size: 1, type: 'image/png' });
+    fieldsOf(version, 'sketch')?.set('points', { 0: 0 });
+    doc.restoreFrom(version);
+    expect(fieldsOf(doc, 'sketch')?.get('points')).toEqual({ 0: 0 });
+    expect(doc.get('picture')).toEqual(version.get('picture'));
+  });
+
+  it('leaves out broken entries of the version and drops those of the board', () => {
+    const doc = new BoardDocument();
+    doc.add(rect('a'));
+    doc.doc.getMap('elements').set('old-junk', 'текст');
+    const version = versionOf(doc);
+    version.doc.getMap('elements').delete('old-junk');
+    version.doc.getMap('elements').set('junk', 5);
+    fieldsOf(doc, 'a')?.set('x', 'не число');
+
+    doc.restoreFrom(version);
+    const elements = doc.doc.getMap('elements');
+    expect([...elements.keys()]).toEqual(['a']);
+    expect(doc.get('a')).toEqual(version.get('a'));
   });
 });

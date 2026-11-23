@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type BoardInfo } from '../api';
+import { api, type BoardInfo, canManage } from '../api';
 import { useAuth } from '../auth/context';
 import { type BoardsView, boardsPath } from '../router';
 import controls from '../ui/controls.module.css';
@@ -8,11 +8,12 @@ import { AppHeader } from './AppHeader';
 import list from './boards/boards.module.css';
 import { ACCESS_TEXT, BoardRow, confirmAndDelete } from './boards/BoardRow';
 import { MyBoards } from './boards/MyBoards';
+import { FromTemplateDialog } from './boards/NewBoardDialog';
 import styles from './pages.module.css';
 
 const UNREACHABLE = 'Сервер недоступен. Попробуйте обновить страницу.';
 
-/** Список досок: свои по папкам, доступные от коллег и, для администратора, все. */
+/** Список досок: свои по папкам, доступные от коллег, шаблоны компании и, администратору, все. */
 export function BoardsPage({ view }: { view: BoardsView }) {
   const { user } = useAuth();
   const admin = user.role === 'admin';
@@ -27,6 +28,9 @@ export function BoardsPage({ view }: { view: BoardsView }) {
           <Tab to={boardsPath({ view: 'shared' })} current={view.view === 'shared'}>
             Доступные мне
           </Tab>
+          <Tab to={boardsPath({ view: 'templates' })} current={view.view === 'templates'}>
+            Шаблоны
+          </Tab>
           {admin && (
             <Tab to={boardsPath({ view: 'all' })} current={view.view === 'all'}>
               Все доски
@@ -35,6 +39,7 @@ export function BoardsPage({ view }: { view: BoardsView }) {
         </nav>
         {view.view === 'mine' && <MyBoards folderId={view.folderId} />}
         {view.view === 'shared' && <SharedBoards />}
+        {view.view === 'templates' && <CompanyTemplates />}
         {view.view === 'all' &&
           (admin ? (
             <AllBoards />
@@ -106,6 +111,68 @@ function SharedBoards() {
           ))}
         </ul>
       )}
+    </>
+  );
+}
+
+/**
+ * Шаблоны компании. Их видят все: по шаблону создают свою доску, а владелец шаблона
+ * и администратор могут его удалить.
+ */
+function CompanyTemplates() {
+  const { boards: templates, setBoards, error, setError } = useBoards(api.listTemplates);
+  const [chosen, setChosen] = useState<BoardInfo | null>(null);
+  const remove = async (template: BoardInfo) => {
+    if (await confirmAndDelete(template, setError)) {
+      setBoards((all) => all?.filter((t) => t.id !== template.id) ?? null);
+    }
+  };
+  return (
+    <>
+      <div className={styles.listHeader}>
+        <h1>Шаблоны компании</h1>
+      </div>
+      <p className={controls.muted}>
+        Шаблоны видят все сотрудники и создают по ним свои доски. Чтобы добавить шаблон, откройте
+        свою доску и сохраните её шаблоном в окне «Поделиться».
+      </p>
+      {error && (
+        <p className={controls.error} role="alert">
+          {error}
+        </p>
+      )}
+      {templates?.length === 0 && <p className={controls.muted}>Шаблонов пока нет.</p>}
+      {templates && templates.length > 0 && (
+        <ul className={styles.boards}>
+          {templates.map((template) => (
+            <BoardRow
+              key={template.id}
+              board={template}
+              details={[`автор ${template.owner?.name ?? 'не указан'}`]}
+            >
+              <button
+                type="button"
+                className={controls.secondary}
+                aria-label={`Создать доску по шаблону ${template.name}`}
+                onClick={() => setChosen(template)}
+              >
+                Создать доску
+              </button>
+              {canManage(template.access) && (
+                <button
+                  type="button"
+                  className={controls.ghost}
+                  aria-label={`Удалить шаблон ${template.name}`}
+                  onClick={() => void remove(template)}
+                >
+                  Удалить
+                </button>
+              )}
+            </BoardRow>
+          ))}
+        </ul>
+      )}
+      {chosen && <FromTemplateDialog template={chosen} onClose={() => setChosen(null)} />}
     </>
   );
 }

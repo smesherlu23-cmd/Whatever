@@ -15,19 +15,33 @@ function same(a: EditorState, b: EditorState): boolean {
   );
 }
 
+interface Tracked {
+  readonly editor: Editor;
+  readonly state: EditorState;
+}
+
 /**
  * Подписка React-компонента на состояние редактора. Перерисовывает интерфейс только
  * когда меняется то, что он показывает, а не на каждое движение мыши.
+ * Если компоненту передали другой редактор (например, открыли просмотр версии доски),
+ * его состояние видно в том же кадре, а не после первого изменения.
  */
 export function useEditorState(editor: Editor): EditorState {
-  const [state, setState] = useState(() => editor.getState());
+  const [tracked, setTracked] = useState<Tracked>(() => ({ editor, state: editor.getState() }));
+  let current = tracked;
+  if (current.editor !== editor) {
+    current = { editor, state: editor.getState() };
+    setTracked(current);
+  }
   useEffect(
     () =>
       editor.subscribe(() => {
         const next = editor.getState();
-        setState((prev) => (same(prev, next) ? prev : next));
+        setTracked((prev) =>
+          prev.editor === editor && same(prev.state, next) ? prev : { editor, state: next },
+        );
       }),
     [editor],
   );
-  return state;
+  return current.state;
 }

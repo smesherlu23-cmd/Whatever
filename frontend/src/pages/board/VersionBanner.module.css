@@ -1,0 +1,40 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* На узком холсте плашка сжимается за счёт текста, кнопки остаются целыми. */
+  min-width: 0;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0 8px 0 0;
+}
+
+.label,
+.version {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.version {
+  max-width: 360px;
+  font-weight: 600;
+}
+
+.banner button {
+  flex: none;
+}

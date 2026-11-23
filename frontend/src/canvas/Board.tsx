@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useRef } from 'react';
 import type { Presence } from '../collab/presence';
 import type { Editor, Tool } from '../editor/Editor';
 import type { FileRef, Point } from '../model/types';
+import { modalDialogOpen } from '../ui/modal';
 import { subscribeTheme } from '../ui/theme';
 import { screenToWorld } from './camera';
 import styles from './Board.module.css';
@@ -16,6 +17,10 @@ function cursorFor(tool: Tool): string {
 }
 
 const TYPING_TARGETS = 'input, textarea, select, [contenteditable="true"]';
+
+/** Клавиши и вставка достаются не доске, а открытому окну или полю, в котором печатают. */
+const notForBoard = (e: Event): boolean =>
+  modalDialogOpen() || (e.target instanceof Element && e.target.closest(TYPING_TARGETS) !== null);
 
 const hasFiles = (data: DataTransfer | null): data is DataTransfer =>
   data !== null && Array.from(data.types).includes('Files');
@@ -134,7 +139,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
     };
     // Снимок экрана из буфера обмена встаёт под указатель, а если он не над холстом — в середину.
     const onPaste = (e: ClipboardEvent) => {
-      if (e.target instanceof Element && e.target.closest(TYPING_TARGETS)) return;
+      if (notForBoard(e)) return;
       const files = Array.from(e.clipboardData?.files ?? []);
       if (files.length === 0) return;
       e.preventDefault();
@@ -142,8 +147,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
     };
 
     const onKey = (e: KeyboardEvent) => {
-      // Пока пользователь печатает в поле ввода, клавиши принадлежат полю.
-      if (e.target instanceof Element && e.target.closest(TYPING_TARGETS)) return;
+      if (notForBoard(e)) return;
       if (e.code === 'Space') {
         editor.spaceHeld = e.type === 'keydown';
         requestDraw();

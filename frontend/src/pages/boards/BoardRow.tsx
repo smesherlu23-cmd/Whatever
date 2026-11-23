@@ -34,17 +34,21 @@ export function BoardRow({
   );
 }
 
-/** Удаляет доску после подтверждения. Возвращает true, если доска удалена. */
+/** Удаляет доску или шаблон после подтверждения. Возвращает true, если удалось. */
 export async function confirmAndDelete(
   board: BoardInfo,
   onError: (text: string) => void,
 ): Promise<boolean> {
-  if (!window.confirm(`Удалить доску «${board.name}»? Это нельзя отменить.`)) return false;
+  const question = board.is_template
+    ? `Удалить шаблон «${board.name}»? Доски, созданные по нему, останутся.`
+    : `Удалить доску «${board.name}»? Это нельзя отменить.`;
+  if (!window.confirm(question)) return false;
   try {
     await api.deleteBoard(board.id);
     return true;
   } catch {
-    onError(`Не удалось удалить доску «${board.name}». Проверьте связь с сервером.`);
+    const what = board.is_template ? 'шаблон' : 'доску';
+    onError(`Не удалось удалить ${what} «${board.name}». Проверьте связь с сервером.`);
     return false;
   }
 }

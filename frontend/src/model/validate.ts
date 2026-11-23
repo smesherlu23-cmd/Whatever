@@ -3,6 +3,7 @@ import {
   type ArrowEnd,
   type ArrowHead,
   type BoardElement,
+  type Bounds,
   DEFAULT_ARROW_STYLE,
   DEFAULT_PAGE,
   type FileRef,
@@ -28,6 +29,19 @@ const isString = (value: unknown): value is string => typeof value === 'string';
 
 export function isPoint(value: unknown): value is Point {
   return isRecord(value) && isNumber(value.x) && isNumber(value.y);
+}
+
+/** Прямоугольник с конечными координатами и положительными шириной и высотой. */
+export function isBounds(value: unknown): value is Bounds {
+  return (
+    isRecord(value) &&
+    isNumber(value.x) &&
+    isNumber(value.y) &&
+    isNumber(value.w) &&
+    isNumber(value.h) &&
+    value.w > 0 &&
+    value.h > 0
+  );
 }
 
 export function isStringArray(value: unknown): value is string[] {

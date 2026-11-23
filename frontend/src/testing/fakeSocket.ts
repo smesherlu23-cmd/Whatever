@@ -32,22 +32,41 @@ export class FakeSocket {
   closeByServer(code: number): void {
     this.onclose?.({ code, reason: '' });
   }
+
+  /** Сообщение от сервера. */
+  receive(data: Uint8Array): void {
+    this.onmessage?.({ data: data.slice().buffer });
+  }
 }
 
-/** Замена y-indexeddb для jsdom, где нет IndexedDB. Подключается через vi.mock. */
-export const indexeddbStub = {
-  IndexeddbPersistence: class {
-    static cleared: string[] = [];
+/** Локальная копия доски для jsdom, где нет IndexedDB. Загружается, когда скажет тест. */
+class FakePersistence {
+  static cleared: string[] = [];
+  static last: FakePersistence | null = null;
+  private readonly onSynced: (() => void)[] = [];
 
-    constructor(readonly name: string) {}
+  constructor(readonly name: string) {
+    FakePersistence.last = this;
+  }
 
-    destroy(): Promise<void> {
-      return Promise.resolve();
-    }
+  once(_event: 'synced', listener: () => void): void {
+    this.onSynced.push(listener);
+  }
 
-    clearData(): Promise<void> {
-      indexeddbStub.IndexeddbPersistence.cleared.push(this.name);
-      return Promise.resolve();
-    }
-  },
-};
+  /** Копия «загрузилась»: срабатывают подписки на synced. */
+  load(): void {
+    for (const listener of this.onSynced.splice(0)) listener();
+  }
+
+  destroy(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  clearData(): Promise<void> {
+    FakePersistence.cleared.push(this.name);
+    return Promise.resolve();
+  }
+}
+
+/** Замена y-indexeddb для jsdom. Подключается через vi.mock. */
+export const indexeddbStub = { IndexeddbPersistence: FakePersistence };

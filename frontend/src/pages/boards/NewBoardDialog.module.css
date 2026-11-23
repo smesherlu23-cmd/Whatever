@@ -1,0 +1,116 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.starts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.starts legend,
+.starts h3 {
+  margin: 0 0 2px;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: normal;
+}
+
+.starts h3 {
+  margin-top: 14px;
+}
+
+.starts p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(198px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.card:hover {
+  background: var(--bg-hover);
+}
+
+.card:has(:checked) {
+  border-color: var(--selection);
+  box-shadow: inset 0 0 0 1px var(--selection);
+}
+
+.card:has(:focus-visible) {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+}
+
+/* Радиокнопка остаётся в форме и ловит клавиши, а выбор показывает рамка карточки. */
+.radio {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 110px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: var(--canvas-bg);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.blank {
+  color: var(--text-muted);
+  font-size: 32px;
+  font-weight: 300;
+}
+
+.name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.description {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.footer {
+  position: sticky;
+  bottom: -24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 -24px -24px;
+  padding: 12px 24px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.footer > :last-child {
+  margin-top: 0;
+}

@@ -1,13 +1,14 @@
 import { type SubmitEvent, useEffect, useState } from 'react';
 import { api, type BoardInfo, errorText, type Folder } from '../../api';
 import { useAuth } from '../../auth/context';
-import { boardsPath, navigate } from '../../router';
+import { boardsPath } from '../../router';
 import controls from '../../ui/controls.module.css';
 import { Link } from '../../ui/Link';
 import styles from '../pages.module.css';
 import list from './boards.module.css';
 import { BoardRow, confirmAndDelete } from './BoardRow';
 import { folderChoices, folderPath, subfolders } from './folders';
+import { NewBoardDialog } from './NewBoardDialog';
 
 const UNREACHABLE = 'Сервер недоступен. Попробуйте обновить страницу.';
 
@@ -20,6 +21,7 @@ export function MyBoards({ folderId }: { folderId: string | null }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [creatingBoard, setCreatingBoard] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,15 +46,6 @@ export function MyBoards({ folderId }: { folderId: string | null }) {
   const inner = subfolders(folders, folderId);
   const failed = (err: unknown) => {
     setError(errorText(err, 'Не удалось сохранить. Проверьте связь с сервером.'));
-  };
-
-  const createBoard = async () => {
-    try {
-      const board = await api.createBoard('Новая доска', current?.id ?? null);
-      navigate(`/b/${board.id}`);
-    } catch {
-      setError('Не удалось создать доску. Проверьте связь с сервером.');
-    }
   };
 
   const createFolder = async (name: string) => {
@@ -141,7 +134,7 @@ export function MyBoards({ folderId }: { folderId: string | null }) {
           >
             Новая папка
           </button>
-          <button type="button" className={controls.primary} onClick={() => void createBoard()}>
+          <button type="button" className={controls.primary} onClick={() => setCreatingBoard(true)}>
             Создать доску
           </button>
         </div>
@@ -150,6 +143,9 @@ export function MyBoards({ folderId }: { folderId: string | null }) {
         <p className={controls.error} role="alert">
           {error}
         </p>
+      )}
+      {creatingBoard && (
+        <NewBoardDialog folderId={current?.id ?? null} onClose={() => setCreatingBoard(false)} />
       )}
       {creatingFolder && (
         <NameForm

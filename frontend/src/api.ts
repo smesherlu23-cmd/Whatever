@@ -23,9 +23,17 @@ export interface BoardInfo {
   /** Папка в списке владельца; у чужих досок всегда null. */
   folder_id: string | null;
   access: Access;
+  /** Шаблон компании: его видят все и выбирают при создании доски. */
+  is_template: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * С чего начинается новая доска: с содержимого, собранного в браузере (так создаются доски
+ * по встроенным шаблонам), или с копии шаблона компании. Без источника доска пустая.
+ */
+export type BoardSource = { content: string } | { template_id: string };
 
 export interface Folder {
   id: string;
@@ -59,6 +67,73 @@ export interface BoardAccess {
   owner: Person | null;
   members: Member[];
   links: ShareLink[];
+}
+
+/** Метка на элементе: id элемента и место на нём в долях ширины и высоты. */
+export interface ElementAnchor {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface Comment {
+  id: string;
+  author: Person | null;
+  text: string;
+  /** Упомянутые через @логин, которые могут открыть доску. */
+  mentions: Person[];
+  created_at: string;
+  edited_at: string | null;
+}
+
+/** Обсуждение на доске. Первый комментарий — вопрос, остальные — ответы. */
+export interface CommentThread {
+  id: string;
+  page: string;
+  /** Точка страницы, где поставили метку. Метка элемента показывается на нём, пока он есть. */
+  x: number;
+  y: number;
+  element: ElementAnchor | null;
+  author: Person | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: Person | null;
+  comments: Comment[];
+}
+
+export type NewThread = Pick<CommentThread, 'page' | 'x' | 'y' | 'element'> & { text: string };
+
+export interface AppNotification {
+  id: string;
+  /** Упоминание или ответ в обсуждении, где пользователь участвует. */
+  kind: 'mention' | 'reply';
+  read: boolean;
+  created_at: string;
+  /** Автор комментария. */
+  actor: Person | null;
+  board: { id: string; name: string };
+  thread_id: string;
+  comment_id: string;
+  /** Начало комментария. */
+  excerpt: string;
+}
+
+export interface Notifications {
+  unread: number;
+  /** Последние уведомления, начиная с новых. */
+  items: AppNotification[];
+}
+
+/** Версия доски: её содержимое в какой-то момент. Само содержимое загружается отдельно. */
+export interface BoardVersion {
+  id: string;
+  /** У автоматических версий названия нет. */
+  name: string | null;
+  created_at: string;
+  /** Кто сохранил версию вручную. */
+  saved_by: Person | null;
+  /** Кто менял доску после предыдущей версии. */
+  editors: Person[];
 }
 
 export type Role = 'admin' | 'user';
@@ -191,14 +266,26 @@ export const api = {
   /** Все доски сервера, только для администратора. */
   listAllBoards: () => sendJson<BoardInfo[]>('/boards?all=true'),
   getBoard: (id: string) => sendJson<BoardInfo>(`/boards/${id}`),
-  createBoard: (name: string, folderId: string | null = null) =>
-    sendJson<BoardInfo>('/boards', { method: 'POST', body: { name, folder_id: folderId } }),
+  createBoard: (name: string, folderId: string | null = null, source?: BoardSource) =>
+    sendJson<BoardInfo>('/boards', {
+      method: 'POST',
+      body: { name, folder_id: folderId, ...source },
+    }),
   renameBoard: (id: string, name: string) =>
     sendJson<BoardInfo>(`/boards/${id}`, { method: 'PATCH', body: { name } }),
   /** null переносит доску из папки в корень. */
   moveBoard: (id: string, folderId: string | null) =>
     sendJson<BoardInfo>(`/boards/${id}`, { method: 'PATCH', body: { folder_id: folderId } }),
   deleteBoard: (id: string) => sendEmpty(`/boards/${id}`, { method: 'DELETE' }),
+  /** Содержимое доски одним обновлением Yjs: по нему рисуется превью шаблона. */
+  boardContent: async (id: string) =>
+    new Uint8Array(await (await send(`/boards/${id}/content`)).arrayBuffer()),
+
+  /** Шаблоны компании по названию. */
+  listTemplates: () => sendJson<BoardInfo[]>('/templates'),
+  /** Сохраняет копию доски шаблоном компании. */
+  saveTemplate: (boardId: string, name: string) =>
+    sendJson<BoardInfo>(`/boards/${boardId}/template`, { method: 'POST', body: { name } }),
 
   listFolders: () => sendJson<Folder[]>('/folders'),
   createFolder: (name: string, parentId: string | null) =>
@@ -235,6 +322,39 @@ export const api = {
       content,
       headers: { 'X-File-Name': encodeURIComponent(name) },
     }),
+
+  /** Обсуждения доски, в том числе решённые, по времени начала. */
+  listThreads: (boardId: string) => sendJson<CommentThread[]>(`/boards/${boardId}/threads`),
+  createThread: (boardId: string, thread: NewThread) =>
+    sendJson<CommentThread>(`/boards/${boardId}/threads`, { method: 'POST', body: thread }),
+  setThreadResolved: (threadId: string, resolved: boolean) =>
+    sendJson<CommentThread>(`/threads/${threadId}`, { method: 'PATCH', body: { resolved } }),
+  deleteThread: (threadId: string) => sendEmpty(`/threads/${threadId}`, { method: 'DELETE' }),
+  /** Ответ в обсуждении. Возвращает обсуждение целиком. */
+  reply: (threadId: string, text: string) =>
+    sendJson<CommentThread>(`/threads/${threadId}/comments`, { method: 'POST', body: { text } }),
+  editComment: (commentId: string, text: string) =>
+    sendJson<CommentThread>(`/comments/${commentId}`, { method: 'PATCH', body: { text } }),
+  deleteComment: (commentId: string) => sendEmpty(`/comments/${commentId}`, { method: 'DELETE' }),
+  /** Кого можно упомянуть: активные пользователи, которые могут открыть доску. */
+  boardPeople: (boardId: string) => sendJson<Person[]>(`/boards/${boardId}/people`),
+
+  notifications: () => sendJson<Notifications>('/notifications'),
+  /** Отмечает прочитанными уведомления об обсуждении: его открыли. */
+  readThread: (threadId: string) => sendEmpty(`/threads/${threadId}/read`, { method: 'POST' }),
+  readAllNotifications: () => sendEmpty('/notifications/read-all', { method: 'POST' }),
+
+  /** Версии доски, начиная с новых. */
+  listVersions: (boardId: string) => sendJson<BoardVersion[]>(`/boards/${boardId}/versions`),
+  /** Сохраняет версию с тем, что сейчас на доске. */
+  saveVersion: (boardId: string, name: string) =>
+    sendJson<BoardVersion>(`/boards/${boardId}/versions`, { method: 'POST', body: { name } }),
+  renameVersion: (versionId: string, name: string) =>
+    sendJson<BoardVersion>(`/versions/${versionId}`, { method: 'PATCH', body: { name } }),
+  deleteVersion: (versionId: string) => sendEmpty(`/versions/${versionId}`, { method: 'DELETE' }),
+  /** Содержимое доски в версии одним обновлением Yjs. */
+  versionState: async (versionId: string): Promise<Uint8Array> =>
+    new Uint8Array(await (await send(`/versions/${versionId}/state`)).arrayBuffer()),
 
   listUsers: () => sendJson<User[]>('/admin/users'),
   createUser: (user: NewUser) => sendJson<User>('/admin/users', { method: 'POST', body: user }),

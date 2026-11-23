@@ -1,6 +1,7 @@
 import type { Awareness } from 'y-protocols/awareness';
-import { DEFAULT_PAGE, type Point } from '../model/types';
-import { isPoint, isRecord, isStringArray } from '../model/validate';
+import { sameBounds } from '../model/geometry';
+import { type Bounds, DEFAULT_PAGE, type Point } from '../model/types';
+import { isBounds, isPoint, isRecord, isStringArray } from '../model/validate';
 import { colorFor } from './colors';
 
 export interface Peer {
@@ -10,20 +11,29 @@ export interface Peer {
   /** Страница, которую участник сейчас смотрит. Курсор и выделение относятся к ней. */
   page: string;
   cursor: Point | null;
+  /** Часть страницы, которая видна у участника в окне; null, пока он её не сообщил. */
+  view: Bounds | null;
   selection: readonly string[];
 }
+
+/** Участник без курсора, вида и выделения: то, что показывает список в шапке. */
+export type Participant = Pick<Peer, 'clientId' | 'name' | 'color' | 'page'>;
 
 /** То, что участник публикует о себе через awareness. */
 interface PresenceState {
   user?: { name: string; color: string };
   page?: string;
   cursor?: Point | null;
+  view?: Bounds | null;
   selection?: readonly string[];
 }
 
+/** То, что меняется непрерывно, пока участник водит мышью или двигает доску. */
+type LiveState = Pick<PresenceState, 'cursor' | 'view'>;
+
 /** Участник из состояния awareness или null, если состояние неполное или битое. */
 function parsePeer(clientId: number, state: Record<string, unknown>): Peer | null {
-  const { user, page, cursor, selection } = state;
+  const { user, page, cursor, view, selection } = state;
   if (!isRecord(user)) return null;
   const { name, color } = user;
   if (typeof name !== 'string' || typeof color !== 'string') return null;
@@ -33,16 +43,17 @@ function parsePeer(clientId: number, state: Record<string, unknown>): Peer | nul
     color,
     page: typeof page === 'string' ? page : DEFAULT_PAGE,
     cursor: isPoint(cursor) ? cursor : null,
+    view: isBounds(view) ? { x: view.x, y: view.y, w: view.w, h: view.h } : null,
     selection: isStringArray(selection) ? selection : [],
   };
 }
 
-/** Не чаще 20 обновлений курсора в секунду на участника. */
-const CURSOR_INTERVAL_MS = 50;
+/** Курсор и вид уходят вместе и не чаще 20 раз в секунду на участника. */
+const LIVE_INTERVAL_MS = 50;
 
 /**
- * Присутствие участников: имя, цвет, курсор и выделение. Данные не попадают в документ
- * и исчезают, когда участник уходит.
+ * Присутствие участников: имя, цвет, открытая страница, курсор, видимая часть доски
+ * и выделение. Данные не попадают в документ и исчезают, когда участник уходит.
  *
  * Своё состояние хранится здесь, а не только в awareness: соединение с сервером может
  * пересоздаваться (переподключение, повторный запуск эффекта в React), и после attach
@@ -52,9 +63,9 @@ export class Presence {
   private awareness: Awareness | null = null;
   private local: PresenceState;
   private readonly listeners = new Set<() => void>();
-  private lastCursorSent = 0;
-  private pendingCursor: Point | null | undefined;
-  private cursorTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastLiveSent = 0;
+  private pendingLive: LiveState | null = null;
+  private liveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly clientId: number,
@@ -64,6 +75,7 @@ export class Presence {
       user: { name, color: colorFor(clientId) },
       page: DEFAULT_PAGE,
       cursor: null,
+      view: null,
       selection: [],
     };
   }
@@ -79,7 +91,7 @@ export class Presence {
     this.notify();
     return () => {
       awareness.off('change', notify);
-      this.cancelCursorTimer();
+      this.cancelLiveTimer();
       this.awareness = null;
       this.notify();
     };
@@ -93,25 +105,23 @@ export class Presence {
     this.publish({ selection: [...ids] });
   }
 
-  /** Другая страница: курсор с прежней страницы там ничего не значит и убирается. */
+  /** Другая страница: курсор и вид с прежней страницы там ничего не значат и убираются. */
   setPage(page: string): void {
     if (page === this.local.page) return;
-    this.pendingCursor = undefined;
-    this.cancelCursorTimer();
-    this.publish({ page, cursor: null, selection: [] });
+    this.pendingLive = null;
+    this.cancelLiveTimer();
+    this.publish({ page, cursor: null, view: null, selection: [] });
   }
 
-  /** Курсор отправляется не чаще CURSOR_INTERVAL_MS; последнее положение не теряется. */
   setCursor(point: Point | null): void {
-    this.pendingCursor = point;
-    const wait = CURSOR_INTERVAL_MS - (Date.now() - this.lastCursorSent);
-    if (wait <= 0) {
-      this.flushCursor();
-    } else {
-      this.cursorTimer ??= setTimeout(() => {
-        this.flushCursor();
-      }, wait);
-    }
+    this.publishLive({ cursor: point });
+  }
+
+  /** Видимая часть доски: по ней коллеги следуют за участником. Тот же вид не отправляется. */
+  setView(view: Bounds | null): void {
+    const current = this.pendingLive?.view === undefined ? this.local.view : this.pendingLive.view;
+    if (sameBounds(current ?? null, view)) return;
+    this.publishLive({ view });
   }
 
   /** Другие участники, у которых есть имя, по алфавиту. */
@@ -138,17 +148,33 @@ export class Presence {
     this.awareness?.setLocalState(this.local);
   }
 
-  private flushCursor(): void {
-    this.cancelCursorTimer();
-    if (this.pendingCursor === undefined) return;
-    this.publish({ cursor: this.pendingCursor });
-    this.pendingCursor = undefined;
-    this.lastCursorSent = Date.now();
+  /**
+   * Курсор и вид отправляются одним обновлением не чаще LIVE_INTERVAL_MS, а последние
+   * значения не теряются: отложенное обновление уйдёт, когда интервал закончится.
+   */
+  private publishLive(change: LiveState): void {
+    this.pendingLive = { ...this.pendingLive, ...change };
+    const wait = LIVE_INTERVAL_MS - (Date.now() - this.lastLiveSent);
+    if (wait <= 0) {
+      this.flushLive();
+    } else {
+      this.liveTimer ??= setTimeout(() => {
+        this.flushLive();
+      }, wait);
+    }
   }
 
-  private cancelCursorTimer(): void {
-    if (this.cursorTimer) clearTimeout(this.cursorTimer);
-    this.cursorTimer = null;
+  private flushLive(): void {
+    this.cancelLiveTimer();
+    if (!this.pendingLive) return;
+    this.publish(this.pendingLive);
+    this.pendingLive = null;
+    this.lastLiveSent = Date.now();
+  }
+
+  private cancelLiveTimer(): void {
+    if (this.liveTimer) clearTimeout(this.liveTimer);
+    this.liveTimer = null;
   }
 
   private notify(): void {

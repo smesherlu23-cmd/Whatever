@@ -4,7 +4,16 @@ import { ArrowStyleControls } from './ArrowStyleControls';
 import { type IconName, ToolIcon } from './ToolIcon';
 import styles from './Toolbar.module.css';
 
-const TOOLS: readonly { id: Tool & IconName; label: string; key: string }[] = [
+interface ToolButtonSpec {
+  id: Tool & IconName;
+  label: string;
+  key: string;
+}
+
+/** Метка обсуждения. Её ставит и зритель, поэтому кнопка есть и в режиме просмотра. */
+export const COMMENT_TOOL: ToolButtonSpec = { id: 'comment', label: 'Комментарий', key: 'C' };
+
+const TOOLS: readonly ToolButtonSpec[] = [
   { id: 'select', label: 'Выделение', key: 'V' },
   { id: 'pen', label: 'Рисование', key: 'P' },
   { id: 'rectangle', label: 'Прямоугольник', key: 'R' },
@@ -15,9 +24,10 @@ const TOOLS: readonly { id: Tool & IconName; label: string; key: string }[] = [
   { id: 'sticky', label: 'Стикер', key: 'S' },
   { id: 'arrow', label: 'Стрелка', key: 'A' },
   { id: 'text', label: 'Текст', key: 'T' },
+  COMMENT_TOOL,
 ];
 
-function IconButton({
+export function IconButton({
   icon,
   label,
   shortcut,

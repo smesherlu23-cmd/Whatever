@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as Y from 'yjs';
+import { BoardDocument } from '../model/document';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
-import { DEFAULT_FILL, DEFAULT_STICKY_FILL, DEFAULT_STROKE } from '../model/types';
+import {
+  DEFAULT_FILL,
+  DEFAULT_PAGE,
+  DEFAULT_STICKY_FILL,
+  DEFAULT_STROKE,
+  type ShapeElement,
+} from '../model/types';
 import { Editor } from './Editor';
 
 function drag(editor: Editor, from: [number, number], to: [number, number], shift = false) {
@@ -8,6 +16,22 @@ function drag(editor: Editor, from: [number, number], to: [number, number], shif
   editor.pointerMove({ x: (from[0] + to[0]) / 2, y: (from[1] + to[1]) / 2 }, { shift });
   editor.pointerMove({ x: to[0], y: to[1] }, { shift });
   editor.pointerUp();
+}
+
+function rectangle(id: string, x: number, y: number): ShapeElement {
+  return {
+    id,
+    kind: 'rectangle',
+    page: DEFAULT_PAGE,
+    x,
+    y,
+    w: 100,
+    h: 100,
+    text: '',
+    stroke: DEFAULT_STROKE,
+    fill: DEFAULT_FILL,
+    z: 1,
+  };
 }
 
 describe('Editor', () => {
@@ -189,6 +213,139 @@ describe('Editor', () => {
     expect(editor.doc.size).toBe(0);
   });
 
+  it('zooms around the middle of the window and shows the whole page or the selection', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 1000, height: 800 });
+    editor.zoomBy(2);
+    expect(editor.camera.zoom).toBe(2);
+    expect(editor.viewportCenter()).toEqual({ x: 500, y: 400 });
+    editor.resetZoom();
+    expect(editor.camera.zoom).toBe(1);
+
+    editor.centerOn({ x: 0, y: 0 });
+    expect(editor.viewportCenter()).toEqual({ x: 0, y: 0 });
+
+    // На пустой странице показывать нечего, и камера не меняется.
+    const before = editor.camera;
+    editor.zoomToFit();
+    expect(editor.zoomToSelection()).toBe(false);
+    expect(editor.camera).toBe(before);
+
+    editor.setCamera({ x: 0, y: 0, zoom: 1 });
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    editor.setTool('rectangle');
+    drag(editor, [2900, 2000], [3000, 2100]);
+    editor.zoomToFit();
+    expect(editor.camera.zoom).toBeCloseTo(Math.min(904 / 3000, 704 / 2100));
+    expect(editor.zoomToSelection()).toBe(true);
+    expect(editor.viewportCenter().x).toBeCloseTo(2950);
+  });
+
+  it('places a comment pin with one click without changing the board', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    const rect = defined(shapes(editor.doc)[0]);
+    const placed = vi.fn();
+    const stop = editor.onPlaceComment(placed);
+
+    editor.setTool('comment');
+    expect(editor.selection.size).toBe(0);
+    editor.pointerDown({ x: 50, y: 40 });
+    editor.pointerUp();
+    expect(placed).toHaveBeenCalledExactlyOnceWith({
+      page: DEFAULT_PAGE,
+      point: { x: 50, y: 40 },
+      element: rect,
+    });
+    // После метки снова выбрано выделение: следующий щелчок не ставит вторую.
+    expect(editor.tool).toBe('select');
+    expect(editor.selection.size).toBe(0);
+    expect(editor.doc.list()).toEqual([rect]);
+
+    editor.setTool('comment');
+    editor.pointerDown({ x: 400, y: 400 });
+    expect(placed).toHaveBeenLastCalledWith({
+      page: DEFAULT_PAGE,
+      point: { x: 400, y: 400 },
+      element: undefined,
+    });
+
+    stop();
+    editor.setTool('comment');
+    editor.pointerDown({ x: 400, y: 400 });
+    expect(placed).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a point of a page, moving the camera only when the point is hidden', () => {
+    const editor = new Editor();
+    // Окно ещё не показано: страница открывается, а камера ждёт.
+    editor.showPoint(DEFAULT_PAGE, { x: 5000, y: 5000 });
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+
+    editor.setViewport({ width: 1000, height: 800 });
+    editor.showPoint(DEFAULT_PAGE, { x: 500, y: 400 });
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+    // У самого края точку тоже видно плохо.
+    editor.showPoint(DEFAULT_PAGE, { x: 980, y: 400 });
+    expect(editor.viewportCenter()).toEqual({ x: 980, y: 400 });
+
+    const second = editor.doc.addPage('Вторая');
+    editor.showPoint(second, { x: -2000, y: 300 });
+    expect(editor.pageId).toBe(second);
+    expect(editor.viewportCenter()).toEqual({ x: -2000, y: 300 });
+
+    const camera = editor.camera;
+    editor.showPoint('deleted-page', { x: 0, y: 0 });
+    expect(editor.pageId).toBe(second);
+    expect(editor.camera).toBe(camera);
+  });
+
+  it('reveals the content of a loaded page until the camera has been placed', () => {
+    const editor = new Editor();
+    // Смотреть не на что или окно ещё не показано: камера ждёт.
+    editor.revealContent();
+    editor.doc.add(rectangle('far', 3000, 2000));
+    editor.revealContent();
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+
+    editor.setViewport({ width: 800, height: 600 });
+    editor.revealContent();
+    expect(editor.viewportCenter()).toEqual({ x: 3050, y: 2050 });
+    expect(editor.camera.zoom).toBe(1);
+
+    // Камеру уже поставили: новое содержимое её не двигает.
+    editor.doc.add(rectangle('farther', 9000, 2000));
+    editor.revealContent();
+    expect(editor.viewportCenter()).toEqual({ x: 3050, y: 2050 });
+  });
+
+  it('does not move the camera once the user starts working with the board', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    editor.pointerDown({ x: 10, y: 10 });
+    editor.pointerUp();
+    editor.doc.add(rectangle('far', 3000, 2000));
+    editor.revealContent();
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+  });
+
+  it('opens a page for the first time showing all of it and returning keeps its camera', () => {
+    const editor = new Editor();
+    editor.setViewport({ width: 800, height: 600 });
+    const page = editor.doc.addPage('Контейнеры');
+    editor.doc.add({ ...rectangle('far', 3000, 2000), page });
+    editor.setPage(page);
+    expect(editor.viewportCenter()).toEqual({ x: 3050, y: 2050 });
+
+    editor.setCamera({ x: 0, y: 0, zoom: 2 });
+    editor.setPage(DEFAULT_PAGE);
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+    editor.setPage(page);
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 2 });
+  });
+
   it('selects shapes fully inside the marquee', () => {
     const editor = new Editor();
     for (const x of [0, 200, 400]) {
@@ -342,6 +499,16 @@ describe('Editor in read-only mode', () => {
     expect(editor.camera.y).not.toBe(0);
   });
 
+  it('lets a viewer start a discussion', () => {
+    const { editor, rect } = viewerWithShapes();
+    const placed = vi.fn();
+    editor.onPlaceComment(placed);
+    expect(editor.keyDown({ key: 'с', code: 'KeyC' })).toBe(true);
+    expect(editor.tool).toBe('comment');
+    editor.pointerDown({ x: 10, y: 10 });
+    expect(placed).toHaveBeenCalledWith(expect.objectContaining({ element: rect }));
+  });
+
   it('drops an unfinished edit when access is reduced', () => {
     const editor = new Editor();
     editor.setTool('rectangle');
@@ -358,5 +525,34 @@ describe('Editor in read-only mode', () => {
     editor.setReadOnly(false);
     editor.setTool('ellipse');
     expect(editor.tool).toBe('ellipse');
+  });
+});
+
+describe('Editor.restoreVersion', () => {
+  it('keeps the typed text, then restores the version as one undoable change', () => {
+    const editor = new Editor();
+    editor.doc.add(rectangle('a', 0, 0));
+    const version = new BoardDocument();
+    Y.applyUpdate(version.doc, Y.encodeStateAsUpdate(editor.doc.doc));
+    editor.doc.add(rectangle('b', 300, 0));
+    editor.startEditing('a');
+    editor.setEditingText('Набранный текст');
+    editor.select(['b']);
+
+    expect(editor.restoreVersion(version)).toBe(true);
+    expect(editor.editingId).toBeNull();
+    expect(editor.doc.has('b')).toBe(false);
+    expect(editor.selection.size).toBe(0);
+    editor.undo();
+    expect(editor.doc.has('b')).toBe(true);
+    expect(editor.doc.get('a')).toMatchObject({ text: 'Набранный текст' });
+  });
+
+  it('does nothing while the board is read-only', () => {
+    const editor = new Editor();
+    editor.doc.add(rectangle('a', 0, 0));
+    editor.setReadOnly(true);
+    expect(editor.restoreVersion(new BoardDocument())).toBe(false);
+    expect(editor.doc.has('a')).toBe(true);
   });
 });

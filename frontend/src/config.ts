@@ -25,4 +25,6 @@ export const storageKeys = {
   boardAccess: (userId: string, boardId: string) => `whatever-access-${userId}-${boardId}`,
   /** Локальная копия документа доски (база IndexedDB). */
   boardDocument: (boardId: string) => `whatever-board-${boardId}`,
+  /** Показывать ли мини-карту на досках. */
+  minimap: 'whatever-minimap',
 } as const;
