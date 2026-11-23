@@ -12,7 +12,7 @@ COPY . .
 RUN npm run build
 
 # ---------- Рабочий образ: nginx без прав root, слушает порт 8080 ----------
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS runtime
 # Исправления безопасности Alpine, вышедшие после сборки базового образа: Trivy в CI
 # не пропускает уязвимость, для которой исправление уже есть. Пакеты ставит root, nginx
 # работает от своего пользователя, как и в базовом образе.
