@@ -1,5 +1,6 @@
 """WebSocket синхронизации доски: проверка входа и прав, затем подключение к комнате."""
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -11,10 +12,22 @@ from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.core.config import Settings
 from app.core.db import Database
 from app.models import Board
+from app.sync.outbox import Outbox
 from app.sync.room import Connection, RoomManager
-from app.sync.sockets import BOARD_NOT_FOUND, FORBIDDEN, NOT_AUTHENTICATED, BoardSockets
+from app.sync.sockets import (
+    BOARD_NOT_FOUND,
+    FORBIDDEN,
+    NOT_AUTHENTICATED,
+    SLOW_CLIENT,
+    BoardSockets,
+)
 
 router = APIRouter()
+
+# Насколько клиент может отстать, прежде чем его отключат. Снимок большой доски при
+# подключении весит сотни килобайт, а поток правок нескольких участников — десятки килобайт
+# в секунду: запаса хватает на десятки секунд плохой связи.
+OUTBOX_LIMIT_BYTES = 8 * 1024 * 1024
 
 
 class _RejectedError(Exception):
@@ -66,11 +79,23 @@ async def board_socket(websocket: WebSocket, board_id: uuid.UUID) -> None:
         return
 
     await websocket.accept()
-    conn = Connection(websocket.send_bytes, admitted.user_id, can_edit=admitted.can_edit)
+    closing: set[asyncio.Task[None]] = set()
+
+    def disconnect_slow_client() -> None:
+        # Закрытие идёт своей задачей: оно тоже может ждать медленного клиента.
+        task = asyncio.create_task(websocket.close(code=SLOW_CLIENT))
+        closing.add(task)
+        task.add_done_callback(closing.discard)
+
+    outbox = Outbox(
+        websocket.send_bytes, limit=OUTBOX_LIMIT_BYTES, on_overflow=disconnect_slow_client
+    )
+    conn = Connection(outbox.send, admitted.user_id, can_edit=admitted.can_edit)
     with sockets.track(
         websocket, user_id=admitted.user_id, token=admitted.token, board_id=board_id
     ):
-        async with rooms.connect(board_id, conn) as room:
+        async with outbox.running(), rooms.connect(board_id, conn) as room:
             # iter_bytes заканчивается, когда клиент отключился или сервер закрыл соединение.
             async for message in websocket.iter_bytes():
                 await room.receive(conn, message)
+    await asyncio.gather(*closing, return_exceptions=True)
