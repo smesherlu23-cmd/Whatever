@@ -9,9 +9,19 @@ import {
   type ShapeElement,
 } from '../model/types';
 import { type Call, recordingContext } from '../testing/canvas';
-import { renderBoard } from './render';
+import { type OverlayOptions, type SceneOptions, renderOverlay, renderScene } from './render';
 import type { Theme } from './scene';
 import { fileId } from '../testing/helpers';
+
+/** Оба слоя на одном контексте, как их видит пользователь. */
+function renderBoard(
+  ctx: CanvasRenderingContext2D,
+  editor: Editor,
+  options: SceneOptions & OverlayOptions,
+): void {
+  renderScene(ctx, editor, options);
+  renderOverlay(ctx, editor, options);
+}
 
 const theme: Theme = {
   background: '#f4f4f5',

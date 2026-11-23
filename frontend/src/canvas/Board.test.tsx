@@ -2,8 +2,9 @@ import { createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '../editor/Editor';
 import { DEFAULT_FILL, DEFAULT_STROKE, type FileRef, type Point } from '../model/types';
-import { enableCanvas } from '../testing/canvas';
-import { fileId, shapes } from '../testing/helpers';
+import { type Call, enableCanvas, recordingContext } from '../testing/canvas';
+import { defined, fileId, shapes } from '../testing/helpers';
+import { participant, relay } from '../testing/peers';
 import { Dialog } from '../ui/Dialog';
 import { Board } from './Board';
 
@@ -141,5 +142,66 @@ describe('Board', () => {
     expect(editor.camera.y).toBe(-100);
     fireEvent.wheel(canvas, { deltaY: -100, ctrlKey: true });
     expect(editor.camera.zoom).toBeGreaterThan(1);
+  });
+  it('redraws the scene only when it changes and asks for no frames while idle', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      frames.push(callback),
+    );
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const drawn = new Map<HTMLCanvasElement, Call[]>();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
+      this: HTMLCanvasElement,
+    ) {
+      const { ctx, calls } = recordingContext();
+      drawn.set(this, calls);
+      return ctx;
+    });
+    const runFrames = () => {
+      for (const frame of frames.splice(0)) frame(0);
+    };
+    const editor = new Editor();
+    const me = participant('Алиса');
+    const peer = participant('Борис');
+    const { container } = render(<Board editor={editor} presence={me.presence} />);
+    const scene = defined(drawn.get(defined(container.querySelector('canvas[aria-hidden]'))));
+    const overlay = defined(drawn.get(screen.getByLabelText('Холст доски')));
+    const clears = () => overlay.filter(([method]) => method === 'clearRect').length;
+    // Фон сцены — заливка от левого верхнего угла холста.
+    const backgrounds = () =>
+      scene.filter(([method, x, y]) => method === 'fillRect' && x === 0 && y === 0).length;
+
+    runFrames();
+    expect(backgrounds()).toBe(1);
+    expect(clears()).toBe(1);
+    runFrames();
+    expect(frames).toEqual([]);
+
+    // Чужой курсор сдвинулся: перерисован только верхний слой.
+    peer.presence.setCursor({ x: 10, y: 10 });
+    relay(peer, me);
+    runFrames();
+    expect(backgrounds()).toBe(1);
+    expect(clears()).toBe(2);
+
+    // Изменился документ: перерисованы оба слоя.
+    editor.setTool('rectangle');
+    runFrames();
+    expect(backgrounds()).toBe(1);
+    editor.doc.add({
+      id: 'r',
+      kind: 'rectangle',
+      text: '',
+      page: editor.pageId,
+      x: 0,
+      y: 0,
+      w: 10,
+      h: 10,
+      z: 1,
+      stroke: DEFAULT_STROKE,
+      fill: DEFAULT_FILL,
+    });
+    runFrames();
+    expect(backgrounds()).toBe(2);
   });
 });
