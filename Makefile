@@ -7,7 +7,7 @@ SHELL := bash
 
 COMPOSE_DEV := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
-.PHONY: help install db migrate admin backend frontend format check check-backend check-frontend up down logs backup restore
+.PHONY: help install db migrate admin backend frontend format check check-backend check-frontend up down logs backup restore load
 
 help: ## показать список команд
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  \033[1m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -61,3 +61,6 @@ backup: ## резервная копия базы и файлов сейчас, 
 
 restore: ## восстановить из копии: make restore BACKUP=whatever-<дата>
 	ops/restore.sh $(or $(BACKUP),$(error Укажите копию: make restore BACKUP=whatever-<дата>))
+
+load: ## нагрузочный тест синхронизации: make load LOGIN=admin [URL=...] [ARGS="--clients 100"]
+	cd backend && uv run python -m scripts.load --url $(or $(URL),http://localhost:8080) --login $(or $(LOGIN),admin) $(ARGS)
