@@ -1,11 +1,11 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
-import { version } from './package.json';
+import pkg from './package.json' with { type: 'json' };
 
 export default defineConfig({
   plugins: [react()],
   // Версия из package.json попадает в сборку: её видно в меню пользователя.
-  define: { __APP_VERSION__: JSON.stringify(version) },
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: {
     // Сервер сверяет Origin с Host, поэтому прокси передаёт Host браузера без изменений,
     // как nginx в рабочей сборке.
@@ -33,6 +33,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Сквозные тесты (e2e/) запускает Playwright, а не Vitest.
+    include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['src/testing/setup.ts'],
     coverage: {
       provider: 'v8',

@@ -30,7 +30,8 @@ make format                   # исправить форматирование 
 | Бэкенд | ruff (линтер, включая bandit, и форматирование), `mypy --strict`, pytest с покрытием не ниже 90%, предупреждения считаются ошибками |
 | Миграции | применение, откат и повторное применение на PostgreSQL; модели совпадают с миграциями |
 | Фронтенд | Prettier, ESLint (`strictTypeChecked`), TypeScript `strict` и `noUncheckedIndexedAccess`, Vitest с порогами покрытия, сборка |
-| Docker | hadolint, сборка образов, запуск всего стека и проверка `/api/health`, контейнеры не от root |
+| Docker | hadolint, сборка образов, Trivy, запуск всего стека и проверка `/api/health`, контейнеры не от root, сквозные тесты Playwright ([frontend/e2e](frontend/e2e/README.md)), резервная копия и восстановление |
+| Безопасность | pip-audit и npm audit для зависимостей, CodeQL для кода |
 
 Тесты бэкенда работают с настоящим PostgreSQL из `.env` (`make db`), в отдельной базе
 `<POSTGRES_DB>_test`. Её пересоздают при каждом запуске, данные разработки она не трогает.
