@@ -24,7 +24,7 @@ from app.api import (
     versions,
 )
 from app.auth.dependencies import same_origin
-from app.auth.throttle import LoginThrottle
+from app.auth.throttle import LoginGuard, LoginThrottle
 from app.core.config import Settings, get_settings
 from app.core.db import Database
 from app.files import FileStore
@@ -69,8 +69,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.rooms = rooms
         app.state.sockets = BoardSockets()
         app.state.files = FileStore(config.files_dir, config.max_upload_bytes)
-        app.state.login_throttle = LoginThrottle(
-            max_failures=config.login_max_failures, window=config.login_window
+        app.state.login_throttle = LoginGuard(
+            per_login=LoginThrottle(
+                max_failures=config.login_max_failures, window=config.login_window
+            ),
+            per_address=LoginThrottle(
+                max_failures=config.login_max_failures_per_address, window=config.login_window
+            ),
         )
         try:
             yield

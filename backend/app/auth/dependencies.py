@@ -13,7 +13,7 @@ from starlette.requests import HTTPConnection
 
 from app.access import Access, access_to
 from app.auth.sessions import COOKIE_NAME, user_for_token
-from app.auth.throttle import LoginThrottle
+from app.auth.throttle import LoginGuard
 from app.core.config import Settings
 from app.core.db import DbSession
 from app.files import FileStore
@@ -112,12 +112,12 @@ EditableBoard = Annotated[BoardAccess, Depends(board_access(Access.EDIT))]
 ManagedBoard = Annotated[BoardAccess, Depends(board_access(Access.MANAGE))]
 
 
-def login_throttle(request: Request) -> LoginThrottle:
-    throttle: LoginThrottle = request.app.state.login_throttle
+def login_throttle(request: Request) -> LoginGuard:
+    throttle: LoginGuard = request.app.state.login_throttle
     return throttle
 
 
-Throttle = Annotated[LoginThrottle, Depends(login_throttle)]
+Throttle = Annotated[LoginGuard, Depends(login_throttle)]
 
 
 def board_sockets(request: Request) -> BoardSockets:

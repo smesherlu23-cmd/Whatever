@@ -34,6 +34,7 @@ from sqlalchemy import delete, func, select, update
 from app.board_content import read_state
 from app.core.db import Sessions
 from app.models import Board, BoardUpdate, BoardVersion
+from app.sync.limits import AWARENESS_BURST, AWARENESS_MAX_BYTES, AWARENESS_PER_SECOND, RateLimit
 from app.versions import save_version
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class Connection:
         self.user_id = user_id
         self.can_edit = can_edit
         self.client_ids: set[int] = set()
+        self.awareness_limit = RateLimit(AWARENESS_PER_SECOND, AWARENESS_BURST)
 
 
 @dataclass(frozen=True)
@@ -346,10 +348,18 @@ class Room:
         if kind == YMessageType.SYNC:
             await self._receive_sync(conn, message)
         elif kind == YMessageType.AWARENESS:
-            self.awareness.apply_awareness_update(read_message(message[1:]), conn)
-            await self.broadcast(message, exclude=conn)
+            await self._receive_awareness(conn, message)
         elif kind == QUERY_AWARENESS:
             await self._send_awareness(conn)
+
+    async def _receive_awareness(self, conn: Connection, message: bytes) -> None:
+        # Присутствие обновляется постоянно, так что пропущенное сообщение заменит следующее,
+        # а клиент к тому же повторяет своё состояние каждые 15 секунд.
+        if len(message) > AWARENESS_MAX_BYTES or not conn.awareness_limit.allow():
+            log.debug("board %s: dropped an oversized or too frequent presence", self.board_id)
+            return
+        self.awareness.apply_awareness_update(read_message(message[1:]), conn)
+        await self.broadcast(message, exclude=conn)
 
     async def _receive_sync(self, conn: Connection, message: bytes) -> None:
         # Шаг 1 — только запрос недостающего, а шаг 2 и обновления меняют документ.
