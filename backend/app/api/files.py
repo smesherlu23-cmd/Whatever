@@ -8,10 +8,12 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import ClientDisconnect
 
-from app.auth.dependencies import EditableBoard, FileStorage, ViewableBoard
+from app.auth.dependencies import AppSettings, EditableBoard, FileStorage, ViewableBoard
 from app.core.db import DbSession
 from app.files import IMAGE_TYPES, FileTooLargeError
 from app.models import BoardFile
@@ -54,19 +56,42 @@ def too_large(limit: int) -> HTTPException:
     )
 
 
+def no_room(quota: int) -> HTTPException:
+    return HTTPException(
+        status.HTTP_413_CONTENT_TOO_LARGE,
+        f"На доске нет места: файлы доски не могут занимать больше {quota // (1024 * 1024)} МБ",
+    )
+
+
+async def board_files_size(db: AsyncSession, board_id: uuid.UUID) -> int:
+    query = select(func.coalesce(func.sum(BoardFile.size), 0)).where(BoardFile.board_id == board_id)
+    size: int = await db.scalar(query) or 0
+    return size
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_file(
     target: EditableBoard,
     request: Request,
     db: DbSession,
     files: FileStorage,
+    settings: AppSettings,
     name: Annotated[str, Header(alias="X-File-Name")] = "",
 ) -> FileOut:
-    """Принимает файл телом запроса, без multipart: так он сразу пишется на диск по частям."""
+    """Принимает файл телом запроса, без multipart: так он сразу пишется на диск по частям.
+
+    Место на доске проверяется до приёма (по заявленному размеру) и после, по настоящему.
+    Две одновременные загрузки могут вместе немного превысить предел, но не больше чем
+    на размер файла: предел защищает диск, а не считает байты до единого."""
     board_id = target.board.id
+    quota = settings.max_board_files_bytes
+    used = await board_files_size(db, board_id)
     declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > files.max_size:
+    size = int(declared) if declared.isdigit() else 0
+    if size > files.max_size:
         raise too_large(files.max_size)
+    if used + size > quota:
+        raise no_room(quota)
     file_id = uuid.uuid4()
     try:
         saved = await files.save(board_id, file_id, request.stream())
@@ -75,6 +100,9 @@ async def upload_file(
     except ClientDisconnect:
         # Отвечать уже некому; ответ нужен, чтобы обрыв не попал в журнал как сбой сервера.
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Загрузка прервана") from None
+    if used + saved.size > quota:
+        await files.delete(board_id, file_id)
+        raise no_room(quota)
     record = BoardFile(
         board_id=board_id,
         id=file_id,

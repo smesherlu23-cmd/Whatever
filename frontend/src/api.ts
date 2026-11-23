@@ -370,7 +370,8 @@ export function syncUrl(): string {
 
 /** Адрес файла доски: картинки открываются в браузере, остальное скачивается. */
 export function fileUrl(boardId: string, fileId: string): string {
-  return `${API_BASE}/boards/${boardId}/files/${fileId}`;
+  // id приходят из документа доски; экранирование — вторая линия защиты после проверки.
+  return `${API_BASE}/boards/${encodeURIComponent(boardId)}/files/${encodeURIComponent(fileId)}`;
 }
 
 /** Ссылка доступа, которую можно отправить коллеге. */

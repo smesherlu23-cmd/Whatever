@@ -178,6 +178,34 @@ def test_too_large_files_are_rejected() -> None:
         assert upload(client, board["id"], bytes(limit)).status_code == 201
 
 
+def test_a_board_holds_files_up_to_its_quota() -> None:
+    settings = get_settings().model_copy(update={"max_upload_mb": 1, "max_board_files_mb": 1})
+    part = settings.max_board_files_bytes * 6 // 10
+    with TestClient(create_app(settings)) as client:
+        sign_in(client)
+        board = new_board(client)
+        first = uploaded(client, board["id"], PNG + bytes(part))
+
+        declared = upload(client, board["id"], PNG + bytes(part))
+        assert declared.status_code == 413
+        assert declared.json()["detail"].startswith("На доске нет места")
+
+        # Без Content-Length место проверяется по настоящему размеру, когда файл принят.
+        def chunks() -> Iterator[bytes]:
+            yield PNG + bytes(part)
+
+        streamed = client.post(files_url(board["id"]), content=chunks())
+        assert streamed.status_code == 413
+        assert stored_names(client, board["id"]) == [first]
+        assert file_rows(client, board["id"]) == 1
+
+        # Предел у каждой доски свой, а остаток места на этой доске можно занять.
+        assert (
+            upload(client, new_board(client, "Другая")["id"], PNG + bytes(part)).status_code == 201
+        )
+        assert upload(client, board["id"], PNG + bytes(part // 2)).status_code == 201
+
+
 def test_only_editors_upload_and_members_download(anon_client: TestClient) -> None:
     client = anon_client
     viewer, outsider = sign_in(client), sign_in(client)

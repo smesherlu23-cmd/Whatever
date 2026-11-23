@@ -13,6 +13,7 @@ import {
 import { recordingContext } from '../testing/canvas';
 import { ImageCache } from './images';
 import type { Theme } from './scene';
+import { fileId } from '../testing/helpers';
 
 const theme: Theme = {
   background: '#f7f7f8',
@@ -119,7 +120,7 @@ describe('exportPng', () => {
   });
 
   it('waits for pictures and encodes the canvas as PNG', async () => {
-    const file = { id: 'f1', name: 'схема.png', size: 1, type: 'image/png' };
+    const file = { id: fileId(1), name: 'схема.png', size: 1, type: 'image/png' };
     const source = page(shape('p', 0, 0, { kind: 'image', file }));
     const plan = planExport(source, 1);
     if (!plan) throw new Error('Nothing to export');
@@ -133,7 +134,7 @@ describe('exportPng', () => {
 
     const blob = await exportPng(source, plan, theme, 'light', images);
     expect(blob.type).toBe('image/png');
-    expect(ready).toHaveBeenCalledWith(['f1']);
+    expect(ready).toHaveBeenCalledWith([fileId(1)]);
 
     HTMLCanvasElement.prototype.toBlob = vi.fn((done: BlobCallback) => {
       done(null);

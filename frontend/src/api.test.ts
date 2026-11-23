@@ -49,6 +49,7 @@ describe('api', () => {
       encodeURIComponent('схема сети.png'),
     );
     expect(fileUrl('b1', 'f1')).toBe('/api/boards/b1/files/f1');
+    expect(fileUrl('b1', '../users')).toBe('/api/boards/b1/files/..%2Fusers');
   });
 
   it('turns an error status into ApiError', async () => {

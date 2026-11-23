@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { BoardDocument } from '../model/document';
-import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
+import { arrows, defined, fileId, shapes, takeTwo } from '../testing/helpers';
 import {
   DEFAULT_FILL,
   DEFAULT_PAGE,
@@ -186,7 +186,7 @@ describe('Editor', () => {
 
   it('keeps the proportions of a picture unless Shift is held', () => {
     const editor = new Editor();
-    const file = { id: 'f1', name: 'схема.png', size: 10, type: 'image/png' };
+    const file = { id: fileId(1), name: 'схема.png', size: 10, type: 'image/png' };
     editor.insert([
       {
         id: 'p',
@@ -213,7 +213,7 @@ describe('Editor', () => {
     const editor = new Editor();
     editor.setViewport({ width: 800, height: 600 });
     expect(editor.viewportCenter()).toEqual({ x: 400, y: 300 });
-    const file = { id: 'f1', name: 'план.pdf', size: 10, type: 'application/octet-stream' };
+    const file = { id: fileId(1), name: 'план.pdf', size: 10, type: 'application/octet-stream' };
     const card = {
       id: 'c',
       kind: 'file' as const,

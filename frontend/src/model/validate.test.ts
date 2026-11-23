@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { BoardDocument } from './document';
 import { parseElement, parsePage } from './validate';
+import { fileId } from '../testing/helpers';
 
 const rectangle = {
   id: 'r1',
@@ -44,12 +45,16 @@ describe('parseElement', () => {
   });
 
   it('accepts pictures and attachments only with a valid file', () => {
-    const file = { id: 'f1', name: 'схема.png', size: 2048, type: 'image/png' };
+    const file = { id: fileId(1), name: 'схема.png', size: 2048, type: 'image/png' };
     const picture = { ...rectangle, kind: 'image', file: { ...file, extra: 'отброшено' } };
     expect(parseElement(picture)).toEqual({ ...rectangle, kind: 'image', file });
     expect(parseElement({ ...rectangle, kind: 'file', file })).toMatchObject({ file });
     expect(parseElement({ ...rectangle, kind: 'image' })).toBeNull();
-    for (const broken of [null, 'f1', { ...file, size: -1 }, { ...file, id: 7 }]) {
+    const notUuid = [
+      { ...file, id: 'f1' },
+      { ...file, id: '../../admin/users' },
+    ];
+    for (const broken of [null, 'f1', { ...file, size: -1 }, { ...file, id: 7 }, ...notUuid]) {
       expect(parseElement({ ...rectangle, kind: 'file', file: broken })).toBeNull();
     }
     // Другим фигурам файл ни к чему: поле не попадает дальше.

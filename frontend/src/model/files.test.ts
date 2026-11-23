@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extension, fileSummary, formatSize } from './files';
+import { fileId } from '../testing/helpers';
 
 describe('file sizes and names', () => {
   it.each([
@@ -24,7 +25,7 @@ describe('file sizes and names', () => {
   });
 
   it('summarises a file for its card', () => {
-    const file = { id: 'f', name: 'план.docx', size: 2048, type: 'application/octet-stream' };
+    const file = { id: fileId(1), name: 'план.docx', size: 2048, type: 'application/octet-stream' };
     expect(fileSummary(file)).toBe('DOCX · 2 КБ');
     expect(fileSummary({ ...file, name: 'Makefile' })).toBe('2 КБ');
   });

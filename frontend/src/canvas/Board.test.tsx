@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '../editor/Editor';
 import { DEFAULT_FILL, DEFAULT_STROKE, type FileRef, type Point } from '../model/types';
 import { enableCanvas } from '../testing/canvas';
-import { shapes } from '../testing/helpers';
+import { fileId, shapes } from '../testing/helpers';
 import { Dialog } from '../ui/Dialog';
 import { Board } from './Board';
 
@@ -76,7 +76,7 @@ describe('Board', () => {
 
   it('takes files dropped on the canvas or pasted, and opens attachments', () => {
     const editor = new Editor();
-    const file = { id: 'f1', name: 'план.pdf', size: 10, type: 'application/octet-stream' };
+    const file = { id: fileId(1), name: 'план.pdf', size: 10, type: 'application/octet-stream' };
     editor.doc.add({
       id: 'c',
       kind: 'file',
