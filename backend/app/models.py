@@ -154,11 +154,12 @@ class BoardUpdate(Base):
     """Двоичная дельта Yjs. Состояние доски — все дельты по порядку id."""
 
     __tablename__ = "board_updates"
+    # Доска загружается запросом WHERE board_id ORDER BY id: индекс отдаёт строки уже
+    # по порядку, без сортировки.
+    __table_args__ = (Index("ix_board_updates_board_id_id", "board_id", "id"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    board_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("boards.id", ondelete="CASCADE"), index=True
-    )
+    board_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("boards.id", ondelete="CASCADE"))
     data: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

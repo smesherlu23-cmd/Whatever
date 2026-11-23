@@ -29,7 +29,7 @@ from pycrdt import (
     merge_updates,
     read_message,
 )
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 
 from app.board_content import read_state
 from app.core.db import Sessions
@@ -57,7 +57,8 @@ class SavePolicy:
 
     Изменения за delay секунд пишутся одной строкой: перетаскивание фигуры даёт десятки
     изменений в секунду, и писать каждое по отдельности было бы расточительно. Когда записей
-    истории больше compact_after, при закрытии комнаты они сжимаются в один снимок.
+    истории больше compact_after, они сжимаются в один снимок: и в открытой комнате (доска
+    может быть открыта весь день), и при её закрытии.
 
     Версия доски сохраняется через version_interval после первого изменения, которого нет
     в прошлой версии, и при закрытии комнаты, если с тех пор доску меняли. Автоматические
@@ -114,6 +115,8 @@ class Room:
         self.loaded = False
         self._received: list[bytes] = []
         self._unsaved: list[bytes] = []
+        # Сколько строк истории доски в базе: по нему комната решает, когда сжимать.
+        self._stored = 0
         self._save_timer: asyncio.TimerHandle | None = None
         # Записи в базу, которые идут сейчас: закрытие комнаты их дожидается.
         self._writes: set[asyncio.Task[None]] = set()
@@ -133,13 +136,9 @@ class Room:
 
     async def load(self) -> None:
         async with self.sessions() as session:
-            rows = await session.scalars(
-                select(BoardUpdate.data)
-                .where(BoardUpdate.board_id == self.board_id)
-                .order_by(BoardUpdate.id)
-            )
-            for data in rows:
-                self.doc.apply_update(data)
+            # История склеивается в отдельном потоке: после сбоя её может быть много.
+            state = await read_state(session, self.board_id)
+            self._stored = await session.scalar(self._count_stored()) or 0
             last_change = await session.scalar(
                 select(func.max(BoardUpdate.created_at)).where(
                     BoardUpdate.board_id == self.board_id
@@ -150,6 +149,7 @@ class Room:
                     BoardVersion.board_id == self.board_id
                 )
             )
+        self.doc.apply_update(state)
         self._received.clear()
         # Содержимое записано позже последней версии: доску создали по шаблону, её версии
         # удалены по сроку или прошлый сеанс не успел сохранить версию.
@@ -170,6 +170,13 @@ class Room:
                 # Вернуть изменения в очередь, чтобы следующая попытка их записала.
                 self._unsaved[:0] = updates
                 raise
+            self._stored += 1
+            if self._stored > self.policy.compact_after and not self._closed:
+                try:
+                    await self._compact()
+                except Exception:
+                    # Изменения уже записаны; сжатие повторится после следующей записи.
+                    log.warning("board %s: compaction failed", self.board_id, exc_info=True)
 
     async def _persist(self, data: bytes) -> None:
         async with self.sessions() as session:
@@ -228,16 +235,36 @@ class Room:
 
     async def compact(self) -> None:
         """Заменяет накопленные дельты одним снимком, чтобы доска открывалась быстрее."""
+        async with self._save_lock:
+            await self._compact()
+
+    def _count_stored(self) -> Select[int]:
+        return select(func.count()).where(BoardUpdate.board_id == self.board_id)
+
+    async def _compact(self) -> None:
+        # Вызывается под _save_lock: пока идёт сжатие, комната ничего не дописывает. Снимок
+        # берётся из документа в памяти, а в нём есть всё записанное (и ещё не записанное).
         async with self.sessions() as session:
-            count = await session.scalar(
-                select(func.count()).where(BoardUpdate.board_id == self.board_id)
-            )
+            count = await session.scalar(self._count_stored())
             if not count or count <= self.policy.compact_after:
+                self._stored = count or 0
                 return
+            # Снимок помечается временем последнего изменения, а не сжатия: по этому времени
+            # загрузка решает, есть ли на доске то, чего нет ни в одной версии.
+            last_change = await session.scalar(
+                select(func.max(BoardUpdate.created_at)).where(
+                    BoardUpdate.board_id == self.board_id
+                )
+            )
             await session.execute(delete(BoardUpdate).where(BoardUpdate.board_id == self.board_id))
-            session.add(BoardUpdate(board_id=self.board_id, data=self.doc.get_update()))
+            session.add(
+                BoardUpdate(
+                    board_id=self.board_id, data=self.doc.get_update(), created_at=last_change
+                )
+            )
             await session.commit()
-            log.info("board %s compacted from %d updates", self.board_id, count)
+        self._stored = 1
+        log.info("board %s compacted from %d updates", self.board_id, count)
 
     # ---------- Версии ----------
 
