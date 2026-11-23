@@ -3,7 +3,7 @@
 
 ARG PYTHON_VERSION=3.12
 
-FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
 
 # ---------- Зависимости: собираются отдельно, uv и кэш в итоговый образ не попадают ----------
 FROM python:${PYTHON_VERSION}-slim AS build
