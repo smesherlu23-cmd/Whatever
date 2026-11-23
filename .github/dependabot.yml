@@ -34,3 +34,11 @@ updates:
     groups:
       actions:
         update-types: [minor, patch]
+
+  # Действия в CI закреплены по SHA; Dependabot обновляет SHA и комментарий с версией.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions:
+        update-types: [minor, patch]
