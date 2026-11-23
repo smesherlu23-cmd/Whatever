@@ -3,7 +3,7 @@ name: Release
 # Релиз по тегу v<версия>: образы в GitHub Container Registry и архив образов для сервера
 # без доступа в интернет, плюс страница релиза с записью из CHANGELOG.md.
 #
-#     git tag v0.2.0 && git push origin v0.2.0
+#     git tag v0.3.0 && git push origin v0.3.0
 
 on:
   push:

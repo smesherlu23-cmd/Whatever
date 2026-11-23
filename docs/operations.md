@@ -108,15 +108,15 @@ WHATEVER_IMAGE_PREFIX=ghcr.io/smesherlu23-cmd/whatever
 
 ```bash
 make backup                                 # копия перед обновлением
-git fetch --tags && git checkout v0.2.0     # docker-compose.yml и скрипты этой версии
-sed -i 's/^WHATEVER_VERSION=.*/WHATEVER_VERSION=0.2.0/' .env   # или впишите строку
+git fetch --tags && git checkout v0.3.0     # docker-compose.yml и скрипты этой версии
+sed -i 's/^WHATEVER_VERSION=.*/WHATEVER_VERSION=0.3.0/' .env   # или впишите строку
 docker compose pull
 docker compose up -d --no-build --wait --remove-orphans
 ```
 
 **Сервер без доступа в интернет.** На странице релиза на GitHub лежит архив
 `whatever-<версия>-images.tar.gz` со всеми образами. Перенесите его на сервер и загрузите:
-`docker load -i whatever-0.2.0-images.tar.gz`, дальше — как выше, без `docker compose pull`.
+`docker load -i whatever-0.3.0-images.tar.gz`, дальше — как выше, без `docker compose pull`.
 
 **Сборка на сервере** из исходников (без `WHATEVER_IMAGE_PREFIX` и `WHATEVER_VERSION`):
 
