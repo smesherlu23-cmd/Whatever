@@ -1,5 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api, onSignedOut, type User } from '../api';
+import { NotificationsContext } from '../notifications/context';
+import { NotificationStore } from '../notifications/store';
 import { LoginPage } from '../pages/LoginPage';
 import { navigate } from '../router';
 import { type Auth, AuthContext } from './context';
@@ -96,5 +98,12 @@ function SignedIn({
     }),
     [user, onUpdate, onSignOut],
   );
-  return <AuthContext value={auth}>{children}</AuthContext>;
+  // Уведомления спрашиваются, пока пользователь вошёл, и забываются при выходе.
+  const [notifications] = useState(() => new NotificationStore());
+  useEffect(() => notifications.start(), [notifications]);
+  return (
+    <AuthContext value={auth}>
+      <NotificationsContext value={notifications}>{children}</NotificationsContext>
+    </AuthContext>
+  );
 }

@@ -2,7 +2,20 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, LargeBinary, String, false, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -18,6 +31,13 @@ class BoardRole(StrEnum):
 
     VIEWER = "viewer"
     EDITOR = "editor"
+
+
+class NotificationKind(StrEnum):
+    MENTION = "mention"
+    """Пользователя упомянули в комментарии."""
+    REPLY = "reply"
+    """Ответили в обсуждении, которое пользователь начал или где он писал."""
 
 
 def _string_enum(enum: type[StrEnum]) -> Enum:
@@ -164,3 +184,110 @@ class BoardFile(Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CommentThread(Base):
+    """Обсуждение на доске: метка на странице и комментарии к ней по порядку.
+
+    Метку ставят в точку страницы (x, y) или на элемент. Метка элемента ездит вместе с ним:
+    её место на элементе — доли его ширины и высоты от левого верхнего угла (element_x,
+    element_y). Если элемент удалят, метка останется в точке, где её поставили.
+    Страница и элемент — id из документа доски, поэтому внешних ключей у них нет.
+    """
+
+    __tablename__ = "comment_threads"
+    __table_args__ = (
+        CheckConstraint(
+            "(element_id IS NULL) = (element_x IS NULL) "
+            "AND (element_id IS NULL) = (element_y IS NULL)",
+            name="ck_comment_threads_element_anchor",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    board_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("boards.id", ondelete="CASCADE"), index=True
+    )
+    page: Mapped[str] = mapped_column(String(100))
+    x: Mapped[float]
+    y: Mapped[float]
+    element_id: Mapped[str | None] = mapped_column(String(100))
+    element_x: Mapped[float | None]
+    element_y: Mapped[float | None]
+    # Обсуждение остаётся на доске и после удаления учётной записи того, кто его начал.
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    author: Mapped[User | None] = relationship(lazy="raise", foreign_keys=[author_id])
+    resolved_by: Mapped[User | None] = relationship(lazy="raise", foreign_keys=[resolved_by_id])
+    comments: Mapped[list["Comment"]] = relationship(
+        lazy="raise", order_by="Comment.created_at", passive_deletes=True
+    )
+
+
+class Comment(Base):
+    """Комментарий в обсуждении. Первый комментарий — вопрос, с которого обсуждение началось."""
+
+    __tablename__ = "comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("comment_threads.id", ondelete="CASCADE"), index=True
+    )
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    author: Mapped[User | None] = relationship(lazy="raise")
+    # Упомянутые через @логин: их имена выделяются в тексте, и они получают уведомление.
+    mentioned: Mapped[list[User]] = relationship(
+        secondary="comment_mentions", lazy="raise", order_by="User.login", viewonly=True
+    )
+
+
+class CommentMention(Base):
+    """Кого упомянули в комментарии. Упомянуть можно только того, кто может открыть доску."""
+
+    __tablename__ = "comment_mentions"
+
+    comment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("comments.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+class Notification(Base):
+    """Уведомление в колокольчике: упоминание или ответ в обсуждении.
+
+    На один комментарий у пользователя не больше одного уведомления. Удалили комментарий —
+    исчезает и уведомление о нём.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("user_id", "comment_id", name="uq_notifications_user_comment"),
+        # Колокольчик показывает последние уведомления пользователя.
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    comment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("comments.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[NotificationKind] = mapped_column(_string_enum(NotificationKind))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    comment: Mapped[Comment] = relationship(lazy="raise")

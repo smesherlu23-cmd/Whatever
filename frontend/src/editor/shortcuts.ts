@@ -23,6 +23,7 @@ const TOOL_KEYS: Partial<Record<string, Tool>> = {
   KeyS: 'sticky',
   KeyA: 'arrow',
   KeyT: 'text',
+  KeyC: 'comment',
 };
 
 /** Команды с Ctrl (⌘ на Mac). Ключ — латинская буква клавиши. */

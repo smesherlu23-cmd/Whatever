@@ -32,6 +32,11 @@ export class FakeSocket {
   closeByServer(code: number): void {
     this.onclose?.({ code, reason: '' });
   }
+
+  /** Сообщение от сервера. */
+  receive(data: Uint8Array): void {
+    this.onmessage?.({ data: data.slice().buffer });
+  }
 }
 
 /** Локальная копия доски для jsdom, где нет IndexedDB. Загружается, когда скажет тест. */

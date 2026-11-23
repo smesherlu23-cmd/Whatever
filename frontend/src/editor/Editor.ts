@@ -43,10 +43,18 @@ import { commitStroke } from './smartDrawing';
 
 /** Фигуры, которые рисуются протягиванием рамки: все из каталога, кроме файлов. */
 export type ShapeTool = ToolKind;
-export type Tool = 'select' | 'pen' | 'arrow' | ShapeTool;
+/** comment ставит метку обсуждения: документ он не меняет, поэтому доступен и зрителю. */
+export type Tool = 'select' | 'pen' | 'arrow' | 'comment' | ShapeTool;
 
 function isShapeTool(tool: Tool): tool is ShapeTool {
-  return tool !== 'select' && tool !== 'pen' && tool !== 'arrow';
+  return tool !== 'select' && tool !== 'pen' && tool !== 'arrow' && tool !== 'comment';
+}
+
+/** Куда поставили метку обсуждения: точка страницы и верхний элемент под ней, если он есть. */
+export interface CommentPlace {
+  page: string;
+  point: Point;
+  element: BoardElement | undefined;
 }
 
 /** Размер холста в экранных пикселях. */
@@ -77,6 +85,8 @@ const MIN_SIZE = 8;
 const DUPLICATE_OFFSET = 24;
 /** Поля вокруг того, что показывают целиком, в пикселях экрана. */
 const FIT_PADDING_PX = 48;
+/** Насколько точка должна отстоять от края окна, чтобы считаться видной. */
+const SHOW_MARGIN_PX = 64;
 
 export interface PointerInput {
   button?: number;
@@ -142,6 +152,7 @@ export class Editor {
   /** Заготовка для следующей фигуры. Сбрасывается, когда фигура поставлена. */
   private preset: ShapePreset | null = null;
   private readonly listeners = new Set<() => void>();
+  private readonly commentListeners = new Set<(place: CommentPlace) => void>();
   /** Камеры страниц, на которых уже побывали: при возврате страница видна как прежде. */
   private readonly cameras = new Map<string, Camera>();
   /**
@@ -182,6 +193,14 @@ export class Editor {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  /** Подписка на метки обсуждений, которые ставят инструментом «Комментарий». */
+  onPlaceComment(listener: (place: CommentPlace) => void): () => void {
+    this.commentListeners.add(listener);
+    return () => {
+      this.commentListeners.delete(listener);
     };
   }
 
@@ -296,7 +315,7 @@ export class Editor {
 
   /** Выбирает инструмент. preset задаёт текст и размер новой фигуры, например для интерфейса. */
   setTool(tool: Tool, preset: ShapePreset | null = null): void {
-    if (this.readOnly && tool !== 'select') return;
+    if (this.readOnly && tool !== 'select' && tool !== 'comment') return;
     this.tool = tool;
     this.preset = isShapeTool(tool) ? preset : null;
     if (tool !== 'select') this.selection = new Set();
@@ -344,6 +363,23 @@ export class Editor {
   /** Ставит точку доски в середину окна, не меняя масштаб. */
   centerOn(world: Point): void {
     this.setCamera(centerOn(this.camera, world, this.viewport));
+  }
+
+  /**
+   * Открывает страницу page и, если точки там не видно, ставит её в середину окна.
+   * Точку у самого края тоже переносит: рядом с ней должно быть видно то, к чему она относится.
+   */
+  showPoint(page: string, point: Point): void {
+    this.setPage(page);
+    const area = this.visibleArea();
+    if (this.pageId !== page || !area) return;
+    const margin = this.px(SHOW_MARGIN_PX);
+    const inside =
+      point.x >= area.x + margin &&
+      point.x <= area.x + area.w - margin &&
+      point.y >= area.y + margin &&
+      point.y <= area.y + area.h - margin;
+    if (!inside) this.centerOn(point);
   }
 
   /** Показывает всё, что есть на странице. Мелкое не увеличивает больше 100%. */
@@ -472,7 +508,17 @@ export class Editor {
     if (tool === 'pen') this.beginStroke(world);
     else if (tool === 'arrow') this.beginArrow(world);
     else if (tool === 'select') this.beginSelect(world, input.shift ?? false);
+    else if (tool === 'comment') this.placeComment(world);
     else if (isShapeTool(tool)) this.beginCreate(tool, world);
+  }
+
+  /** Метка ставится одним щелчком, после чего снова выбрано выделение. */
+  private placeComment(world: Point): void {
+    const place: CommentPlace = { page: this.pageId, point: world, element: this.elementAt(world) };
+    this.tool = 'select';
+    this.selection = new Set();
+    for (const listener of this.commentListeners) listener(place);
+    this.emit();
   }
 
   private beginCreate(kind: ShapeTool, world: Point): void {

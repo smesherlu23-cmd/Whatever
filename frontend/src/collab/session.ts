@@ -3,6 +3,7 @@ import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 import { reportSignedOut, syncUrl } from '../api';
+import { CommentStore } from '../comments/store';
 import { storageKeys } from '../config';
 import { Editor } from '../editor/Editor';
 import { BoardFiles } from '../files/boardFiles';
@@ -21,6 +22,12 @@ const BOARD_NOT_FOUND = 4404;
 /** Права на доску изменились: клиент переподключится, и сервер проверит их заново. */
 const ACCESS_CHANGED = 4100;
 
+/**
+ * Сообщение сервера поверх протокола y-websocket: обсуждения доски изменились
+ * (COMMENTS_CHANGED в app/sync/room.py). Номер не совпадает с типами самого протокола.
+ */
+export const COMMENTS_CHANGED = 100;
+
 const isFinal = (status: ConnectionStatus) => status === 'not-found' || status === 'forbidden';
 
 /**
@@ -36,6 +43,7 @@ export class BoardSession {
   readonly presence: Presence;
   readonly follow: Follow;
   readonly files: BoardFiles;
+  readonly comments: CommentStore;
   private currentStatus: ConnectionStatus = 'connecting';
   private readonly listeners = new Set<() => void>();
 
@@ -47,6 +55,7 @@ export class BoardSession {
     this.presence = new Presence(this.doc.clientID, userName);
     this.follow = new Follow(this.editor, this.presence);
     this.files = new BoardFiles(boardId);
+    this.comments = new CommentStore(boardId);
   }
 
   get status(): ConnectionStatus {
@@ -106,9 +115,15 @@ export class BoardSession {
       this.editor.revealContent();
     };
     local.once('synced', reveal);
+    // После каждого подключения обсуждения перечитываются: без связи их изменения не доходили.
     provider.on('sync', (synced: boolean) => {
-      if (synced) reveal();
+      if (!synced) return;
+      reveal();
+      this.comments.refresh();
     });
+    provider.messageHandlers[COMMENTS_CHANGED] = () => {
+      this.comments.refresh();
+    };
 
     return () => {
       this.follow.stop();

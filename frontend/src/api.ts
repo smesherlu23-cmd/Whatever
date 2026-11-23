@@ -69,6 +69,61 @@ export interface BoardAccess {
   links: ShareLink[];
 }
 
+/** Метка на элементе: id элемента и место на нём в долях ширины и высоты. */
+export interface ElementAnchor {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface Comment {
+  id: string;
+  author: Person | null;
+  text: string;
+  /** Упомянутые через @логин, которые могут открыть доску. */
+  mentions: Person[];
+  created_at: string;
+  edited_at: string | null;
+}
+
+/** Обсуждение на доске. Первый комментарий — вопрос, остальные — ответы. */
+export interface CommentThread {
+  id: string;
+  page: string;
+  /** Точка страницы, где поставили метку. Метка элемента показывается на нём, пока он есть. */
+  x: number;
+  y: number;
+  element: ElementAnchor | null;
+  author: Person | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: Person | null;
+  comments: Comment[];
+}
+
+export type NewThread = Pick<CommentThread, 'page' | 'x' | 'y' | 'element'> & { text: string };
+
+export interface AppNotification {
+  id: string;
+  /** Упоминание или ответ в обсуждении, где пользователь участвует. */
+  kind: 'mention' | 'reply';
+  read: boolean;
+  created_at: string;
+  /** Автор комментария. */
+  actor: Person | null;
+  board: { id: string; name: string };
+  thread_id: string;
+  comment_id: string;
+  /** Начало комментария. */
+  excerpt: string;
+}
+
+export interface Notifications {
+  unread: number;
+  /** Последние уведомления, начиная с новых. */
+  items: AppNotification[];
+}
+
 export type Role = 'admin' | 'user';
 
 export interface User {
@@ -255,6 +310,27 @@ export const api = {
       content,
       headers: { 'X-File-Name': encodeURIComponent(name) },
     }),
+
+  /** Обсуждения доски, в том числе решённые, по времени начала. */
+  listThreads: (boardId: string) => sendJson<CommentThread[]>(`/boards/${boardId}/threads`),
+  createThread: (boardId: string, thread: NewThread) =>
+    sendJson<CommentThread>(`/boards/${boardId}/threads`, { method: 'POST', body: thread }),
+  setThreadResolved: (threadId: string, resolved: boolean) =>
+    sendJson<CommentThread>(`/threads/${threadId}`, { method: 'PATCH', body: { resolved } }),
+  deleteThread: (threadId: string) => sendEmpty(`/threads/${threadId}`, { method: 'DELETE' }),
+  /** Ответ в обсуждении. Возвращает обсуждение целиком. */
+  reply: (threadId: string, text: string) =>
+    sendJson<CommentThread>(`/threads/${threadId}/comments`, { method: 'POST', body: { text } }),
+  editComment: (commentId: string, text: string) =>
+    sendJson<CommentThread>(`/comments/${commentId}`, { method: 'PATCH', body: { text } }),
+  deleteComment: (commentId: string) => sendEmpty(`/comments/${commentId}`, { method: 'DELETE' }),
+  /** Кого можно упомянуть: активные пользователи, которые могут открыть доску. */
+  boardPeople: (boardId: string) => sendJson<Person[]>(`/boards/${boardId}/people`),
+
+  notifications: () => sendJson<Notifications>('/notifications'),
+  /** Отмечает прочитанными уведомления об обсуждении: его открыли. */
+  readThread: (threadId: string) => sendEmpty(`/threads/${threadId}/read`, { method: 'POST' }),
+  readAllNotifications: () => sendEmpty('/notifications/read-all', { method: 'POST' }),
 
   listUsers: () => sendJson<User[]>('/admin/users'),
   createUser: (user: NewUser) => sendJson<User>('/admin/users', { method: 'POST', body: user }),

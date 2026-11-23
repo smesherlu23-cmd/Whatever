@@ -38,6 +38,11 @@ log = logging.getLogger(__name__)
 # Тип сообщения y-websocket «запросить присутствие всех участников».
 QUERY_AWARENESS = 3
 
+# Сообщение приложения поверх протокола y-websocket: «обсуждения доски изменились, перечитайте
+# их». Номер взят с запасом, чтобы не совпасть с типами самого протокола. Клиент обрабатывает
+# его своим обработчиком сообщений провайдера (src/collab/session.ts).
+COMMENTS_CHANGED = bytes([100])
+
 Send = Callable[[bytes], Awaitable[None]]
 
 
@@ -196,7 +201,7 @@ class Room:
         if ids:
             self.awareness.remove_awareness_states(ids, conn)
             message = create_awareness_message(self.awareness.encode_awareness_update(ids))
-            await self._broadcast(message, exclude=conn)
+            await self.broadcast(message, exclude=conn)
 
     def _on_awareness(self, topic: str, payload: tuple[dict[str, Any], Any]) -> None:
         changes, origin = payload
@@ -215,7 +220,7 @@ class Room:
             await self._receive_sync(conn, message)
         elif kind == YMessageType.AWARENESS:
             self.awareness.apply_awareness_update(read_message(message[1:]), conn)
-            await self._broadcast(message, exclude=conn)
+            await self.broadcast(message, exclude=conn)
         elif kind == QUERY_AWARENESS:
             await self._send_awareness(conn)
 
@@ -236,7 +241,7 @@ class Room:
         self._unsaved.extend(updates)
         self._schedule_save()
         for u in updates:
-            await self._broadcast(create_update_message(u), exclude=conn)
+            await self.broadcast(create_update_message(u), exclude=conn)
 
     async def _send_awareness(self, conn: Connection) -> None:
         states = list(self.awareness.states)
@@ -245,7 +250,8 @@ class Room:
                 create_awareness_message(self.awareness.encode_awareness_update(states))
             )
 
-    async def _broadcast(self, message: bytes, exclude: Connection | None = None) -> None:
+    async def broadcast(self, message: bytes, exclude: Connection | None = None) -> None:
+        """Отправляет сообщение участникам. Отключившиеся по пути не мешают остальным."""
         targets = [c for c in self.connections if c is not exclude]
         results = await asyncio.gather(*(c.send(message) for c in targets), return_exceptions=True)
         for result in results:
@@ -334,6 +340,13 @@ class RoomManager:
         entry = self._rooms.get(board_id)
         if entry is not None and entry.room.loaded:
             await entry.room.save()
+
+    async def broadcast(self, board_id: uuid.UUID, message: bytes) -> None:
+        """Отправляет сообщение всем, у кого открыта доска. Если её никто не открыл, ничего
+        не делает: открывший позже получит всё актуальное при подключении."""
+        entry = self._rooms.get(board_id)
+        if entry is not None:
+            await entry.room.broadcast(message)
 
     def discard(self, board_id: uuid.UUID) -> None:
         """Доску удалили: её открытая комната больше ничего не запишет."""

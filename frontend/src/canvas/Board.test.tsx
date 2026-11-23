@@ -2,25 +2,13 @@ import { createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '../editor/Editor';
 import { DEFAULT_FILL, DEFAULT_STROKE, type FileRef, type Point } from '../model/types';
+import { enableCanvas } from '../testing/canvas';
 import { shapes } from '../testing/helpers';
 import { Board } from './Board';
 
-/** Контекст-заглушка: Board нужен лишь сам факт, что рисовать есть на чём. */
-const nullContext = new Proxy({}, { get: () => () => ({ width: 0 }) });
-
 describe('Board', () => {
   beforeEach(() => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      nullContext as CanvasRenderingContext2D,
-    );
-    HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe = vi.fn();
-        disconnect = vi.fn();
-      },
-    );
+    enableCanvas();
   });
   afterEach(() => {
     vi.restoreAllMocks();

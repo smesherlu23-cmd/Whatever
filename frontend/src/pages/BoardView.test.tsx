@@ -5,23 +5,14 @@ import { Editor } from '../editor/Editor';
 import { BoardFiles } from '../files/boardFiles';
 import type { UploadedFile } from '../api';
 import { BoardDocument } from '../model/document';
+import { enableCanvas } from '../testing/canvas';
 import { deferred, defined, shapes } from '../testing/helpers';
 import { participant, relay } from '../testing/peers';
 import { BoardView } from './BoardView';
 
 describe('BoardView text editing', () => {
   beforeEach(() => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      new Proxy({}, { get: () => () => ({ width: 0 }) }) as CanvasRenderingContext2D,
-    );
-    HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe = vi.fn();
-        disconnect = vi.fn();
-      },
-    );
+    enableCanvas();
   });
   afterEach(() => {
     vi.restoreAllMocks();

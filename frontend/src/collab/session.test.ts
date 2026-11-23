@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { onSignedOut } from '../api';
 import { FakeSocket, indexeddbStub } from '../testing/fakeSocket';
+import { stubServer } from '../testing/server';
 import { BoardDocument } from '../model/document';
 import { contains } from '../model/geometry';
 import { DEFAULT_FILL, DEFAULT_STROKE, type ShapeElement } from '../model/types';
-import { BoardSession } from './session';
+import { BoardSession, COMMENTS_CHANGED } from './session';
 
 function note(id: string, x: number, y: number): ShapeElement {
   return {
@@ -148,6 +149,26 @@ describe('BoardSession', () => {
 
     indexeddbStub.IndexeddbPersistence.last?.load();
     expect(session.editor.camera).toBe(moved);
+    stop();
+  });
+
+  it('reloads the discussions after each sync and when the server says they changed', async () => {
+    const fetch = stubServer(() => Response.json([]));
+    const session = new BoardSession('board-1', 'Анна');
+    const stop = session.start();
+    FakeSocket.last().open();
+    expect(fetch).not.toHaveBeenCalled();
+
+    // Ответ сервера на синхронизацию: шаг 2 протокола y-websocket с пустым обновлением.
+    const update = Y.encodeStateAsUpdate(new Y.Doc());
+    FakeSocket.last().receive(new Uint8Array([0, 1, update.length, ...update]));
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/boards/board-1/threads', expect.anything());
+    await vi.waitFor(() => {
+      expect(session.comments.snapshot.status).toBe('ready');
+    });
+
+    FakeSocket.last().receive(new Uint8Array([COMMENTS_CHANGED]));
+    expect(fetch).toHaveBeenCalledTimes(2);
     stop();
   });
 

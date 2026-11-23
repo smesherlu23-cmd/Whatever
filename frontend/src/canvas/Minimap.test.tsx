@@ -1,17 +1,16 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '../editor/Editor';
+import { enableCanvas } from '../testing/canvas';
 import { Minimap } from './Minimap';
 
 describe('Minimap', () => {
   beforeEach(() => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      new Proxy({}, { get: () => () => undefined }) as CanvasRenderingContext2D,
-    );
-    HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
+    enableCanvas();
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('moves the view to the point under the pointer and keeps following the drag', () => {

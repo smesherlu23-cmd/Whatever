@@ -10,6 +10,9 @@ afterEach(() => {
 // проверяют тесты render.test.ts на записывающей подделке контекста.
 HTMLCanvasElement.prototype.getContext = () => null;
 
+// В jsdom нет захвата указателя, а холст и мини-карта захватывают его при нажатии.
+Element.prototype.setPointerCapture = () => undefined;
+
 // В jsdom у <dialog> нет showModal и close. Здесь их поведение для тестов: окно открывается,
 // а закрытие, как в браузере, присылает событие close.
 HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {

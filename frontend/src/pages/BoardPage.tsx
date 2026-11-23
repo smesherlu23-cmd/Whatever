@@ -1,12 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { type Access, ApiError, api, type BoardInfo, canEdit, canManage } from '../api';
 import { useAuth } from '../auth/context';
 import { BoardSession, type ConnectionStatus } from '../collab/session';
+import { anchorAt, pinPoint } from '../comments/anchor';
+import { isOpen } from '../comments/threads';
+import { useNotificationStore } from '../notifications/context';
+import { boardPath, navigate } from '../router';
 import controls from '../ui/controls.module.css';
 import { AppHeader } from './AppHeader';
 import { forgetAccess, rememberAccess, rememberedAccess } from './boardAccessCache';
+import { CommentPins, type DraftPin } from './board/CommentPins';
+import { CommentsPanel } from './board/CommentsPanel';
 import { ExportDialog } from './board/ExportDialog';
 import { Participants } from './board/Participants';
+import { useComments } from './board/useComments';
 import { FromTemplateDialog } from './boards/NewBoardDialog';
 import { BoardView } from './BoardView';
 import { NotFoundPage } from './NotFoundPage';
@@ -23,7 +30,17 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 
 const NO_ACCESS = 'Нет доступа к доске. Попросите владельца поделиться ею.';
 
-export function BoardPage({ boardId }: { boardId: string }) {
+/**
+ * Страница доски. threadId — обсуждение, открытое в панели: оно берётся из адреса, поэтому
+ * ссылкой на обсуждение можно поделиться, а уведомление ведёт прямо к нему.
+ */
+export function BoardPage({
+  boardId,
+  threadId = null,
+}: {
+  boardId: string;
+  threadId?: string | null;
+}) {
   const { user } = useAuth();
   const [session] = useState(() => new BoardSession(boardId, user.name));
   const [status, setStatus] = useState<ConnectionStatus>(session.status);
@@ -31,6 +48,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const [exporting, setExporting] = useState(false);
   const [copying, setCopying] = useState(false);
   const board = useBoardInfo(boardId, user.id, status === 'connected');
+  const discussion = useDiscussion(session, boardId, threadId);
 
   useEffect(() => {
     const stop = session.start();
@@ -65,6 +83,30 @@ export function BoardPage({ boardId }: { boardId: string }) {
         presence={session.presence}
         follow={session.follow}
         files={session.files}
+        overlay={
+          <CommentPins
+            editor={session.editor}
+            threads={discussion.comments.threads}
+            selectedId={discussion.open ? threadId : null}
+            draft={discussion.draft}
+            onSelect={discussion.select}
+          />
+        }
+        aside={
+          discussion.open && (
+            <CommentsPanel
+              store={session.comments}
+              comments={discussion.comments}
+              editor={session.editor}
+              viewer={{ id: user.id, moderates: board.access !== null && canManage(board.access) }}
+              selectedId={threadId}
+              draft={discussion.draft}
+              onSelect={discussion.select}
+              onDraftDone={discussion.dropDraft}
+              onClose={discussion.close}
+            />
+          )
+        }
         header={
           <AppHeader
             actions={
@@ -83,6 +125,18 @@ export function BoardPage({ boardId }: { boardId: string }) {
                     Создать доску по шаблону
                   </button>
                 )}
+                <button
+                  type="button"
+                  className={controls.secondary}
+                  aria-pressed={discussion.open}
+                  title="Вопросы и замечания к схеме"
+                  onClick={discussion.toggle}
+                >
+                  Обсуждения
+                  {discussion.openCount > 0 && (
+                    <span className={styles.counter}>{discussion.openCount}</span>
+                  )}
+                </button>
                 <button
                   type="button"
                   className={controls.secondary}
@@ -151,6 +205,113 @@ export function BoardPage({ boardId }: { boardId: string }) {
       )}
     </>
   );
+}
+
+interface Discussion {
+  comments: ReturnType<typeof useComments>;
+  /** Открыта ли панель обсуждений. */
+  open: boolean;
+  openCount: number;
+  /** Новое обсуждение, которое пишут, пока его не отправили или не отменили. */
+  draft: DraftPin | null;
+  select: (threadId: string | null) => void;
+  dropDraft: () => void;
+  toggle: () => void;
+  close: () => void;
+}
+
+/**
+ * Обсуждения на доске: панель, открытое обсуждение и новое, которое пишут.
+ * Открытое обсуждение хранится в адресе страницы (?thread=), всё остальное — здесь.
+ */
+function useDiscussion(
+  session: BoardSession,
+  boardId: string,
+  threadId: string | null,
+): Discussion {
+  const { editor } = session;
+  const comments = useComments(session.comments);
+  const notifications = useNotificationStore();
+  const [open, setOpen] = useState(threadId !== null);
+  const [draft, setDraft] = useState<DraftPin | null>(null);
+  const [shownThread, setShownThread] = useState(threadId);
+  // Обсуждение открыли переходом (по уведомлению или ссылке): панель показывает его.
+  if (threadId !== shownThread) {
+    setShownThread(threadId);
+    if (threadId) {
+      setOpen(true);
+      setDraft(null);
+    }
+  }
+
+  const select = (id: string | null) => {
+    setOpen(true);
+    setDraft(null);
+    navigate(boardPath(boardId, id), { replace: true });
+  };
+
+  // Щелчок инструментом «Комментарий» ставит метку нового обсуждения.
+  useEffect(
+    () =>
+      editor.onPlaceComment(({ page, point, element }) => {
+        const lookup = (id: string) => editor.doc.page(page).get(id);
+        setDraft({
+          page,
+          x: point.x,
+          y: point.y,
+          element: element ? anchorAt(element, point, lookup) : null,
+        });
+        setOpen(true);
+      }),
+    [editor],
+  );
+
+  // Открытое обсуждение видно на доске: открыта его страница, а метка не за краем окна.
+  const revealed = useRef<string | null>(null);
+  useEffect(() => {
+    const thread = comments.threads.find((t) => t.id === threadId);
+    if (!thread) {
+      if (threadId === null) revealed.current = null;
+      return;
+    }
+    if (revealed.current === thread.id) return;
+    revealed.current = thread.id;
+    editor.showPoint(
+      thread.page,
+      pinPoint(thread, (id) => editor.doc.page(thread.page).get(id)),
+    );
+  }, [editor, threadId, comments.threads]);
+
+  // Уведомления об открытом обсуждении прочитаны: человек его видит.
+  useEffect(() => {
+    if (!notifications) return;
+    notifications.watchThread(open ? threadId : null);
+    return () => {
+      notifications.watchThread(null);
+    };
+  }, [notifications, open, threadId]);
+
+  const close = () => {
+    setOpen(false);
+    setDraft(null);
+    if (threadId) navigate(boardPath(boardId), { replace: true });
+  };
+
+  return {
+    comments,
+    open,
+    openCount: comments.threads.filter(isOpen).length,
+    draft,
+    select,
+    dropDraft: () => {
+      setDraft(null);
+    },
+    toggle: () => {
+      if (open) close();
+      else setOpen(true);
+    },
+    close,
+  };
 }
 
 interface BoardInfoState {

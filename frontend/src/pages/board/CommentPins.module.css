@@ -1,0 +1,59 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Метка стоит острым углом в точке обсуждения и смотрит вверх и вправо. */
+.pin {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid var(--bg-panel);
+  border-radius: 50% 50% 50% 0;
+  background: var(--bg-active);
+  color: var(--text-on-active);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.pin:hover {
+  scale: 1.1;
+  transform-origin: bottom left;
+}
+
+.pin:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+}
+
+.pin[data-selected] {
+  box-shadow:
+    0 0 0 2px var(--bg-panel),
+    0 0 0 4px var(--selection);
+}
+
+.pin[data-resolved] {
+  border-color: var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+}
+
+/* Метка нового обсуждения, которое ещё пишут. */
+.pin[data-draft] {
+  border: 2px dashed var(--selection);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 16px;
+  cursor: default;
+  pointer-events: none;
+}

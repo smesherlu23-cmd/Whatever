@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { arrows, defined, shapes, takeTwo } from '../testing/helpers';
 import {
   DEFAULT_FILL,
@@ -240,6 +240,66 @@ describe('Editor', () => {
     expect(editor.viewportCenter().x).toBeCloseTo(2950);
   });
 
+  it('places a comment pin with one click without changing the board', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    const rect = defined(shapes(editor.doc)[0]);
+    const placed = vi.fn();
+    const stop = editor.onPlaceComment(placed);
+
+    editor.setTool('comment');
+    expect(editor.selection.size).toBe(0);
+    editor.pointerDown({ x: 50, y: 40 });
+    editor.pointerUp();
+    expect(placed).toHaveBeenCalledExactlyOnceWith({
+      page: DEFAULT_PAGE,
+      point: { x: 50, y: 40 },
+      element: rect,
+    });
+    // После метки снова выбрано выделение: следующий щелчок не ставит вторую.
+    expect(editor.tool).toBe('select');
+    expect(editor.selection.size).toBe(0);
+    expect(editor.doc.list()).toEqual([rect]);
+
+    editor.setTool('comment');
+    editor.pointerDown({ x: 400, y: 400 });
+    expect(placed).toHaveBeenLastCalledWith({
+      page: DEFAULT_PAGE,
+      point: { x: 400, y: 400 },
+      element: undefined,
+    });
+
+    stop();
+    editor.setTool('comment');
+    editor.pointerDown({ x: 400, y: 400 });
+    expect(placed).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a point of a page, moving the camera only when the point is hidden', () => {
+    const editor = new Editor();
+    // Окно ещё не показано: страница открывается, а камера ждёт.
+    editor.showPoint(DEFAULT_PAGE, { x: 5000, y: 5000 });
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+
+    editor.setViewport({ width: 1000, height: 800 });
+    editor.showPoint(DEFAULT_PAGE, { x: 500, y: 400 });
+    expect(editor.camera).toEqual({ x: 0, y: 0, zoom: 1 });
+    // У самого края точку тоже видно плохо.
+    editor.showPoint(DEFAULT_PAGE, { x: 980, y: 400 });
+    expect(editor.viewportCenter()).toEqual({ x: 980, y: 400 });
+
+    const second = editor.doc.addPage('Вторая');
+    editor.showPoint(second, { x: -2000, y: 300 });
+    expect(editor.pageId).toBe(second);
+    expect(editor.viewportCenter()).toEqual({ x: -2000, y: 300 });
+
+    const camera = editor.camera;
+    editor.showPoint('deleted-page', { x: 0, y: 0 });
+    expect(editor.pageId).toBe(second);
+    expect(editor.camera).toBe(camera);
+  });
+
   it('reveals the content of a loaded page until the camera has been placed', () => {
     const editor = new Editor();
     // Смотреть не на что или окно ещё не показано: камера ждёт.
@@ -435,6 +495,16 @@ describe('Editor in read-only mode', () => {
 
     editor.wheel({ x: 0, y: 0 }, 0, 100, false);
     expect(editor.camera.y).not.toBe(0);
+  });
+
+  it('lets a viewer start a discussion', () => {
+    const { editor, rect } = viewerWithShapes();
+    const placed = vi.fn();
+    editor.onPlaceComment(placed);
+    expect(editor.keyDown({ key: 'с', code: 'KeyC' })).toBe(true);
+    expect(editor.tool).toBe('comment');
+    editor.pointerDown({ x: 10, y: 10 });
+    expect(placed).toHaveBeenCalledWith(expect.objectContaining({ element: rect }));
   });
 
   it('drops an unfinished edit when access is reduced', () => {

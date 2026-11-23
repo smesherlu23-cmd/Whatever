@@ -15,8 +15,16 @@
 }
 
 .main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Холст и всё, что лежит поверх него. Боковая панель стоит рядом и делает его уже. */
+.stage {
   position: relative;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -27,15 +35,23 @@
   transform: translateX(-50%);
 }
 
-.readOnly {
-  margin: 0;
-  padding: 8px 14px;
+/* Панель зрителя: менять доску нельзя, а обсуждать можно. */
+.viewerBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-panel);
+  box-shadow: var(--shadow);
+}
+
+.readOnly {
+  margin: 0;
+  padding: 4px 10px 4px 6px;
   color: var(--text-muted);
   font-size: 13px;
-  box-shadow: var(--shadow);
 }
 
 /* Сообщения под панелью инструментов: за кем следуют, загрузка файлов, ошибки. */
@@ -145,6 +161,20 @@
   border-radius: 999px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* Число открытых обсуждений на кнопке. */
+.counter {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bg-active);
+  color: var(--text-on-active);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
 }
 
 .status[data-status='disconnected'] {

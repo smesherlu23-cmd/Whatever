@@ -21,7 +21,7 @@ function Pages() {
     case 'boards':
       return <BoardsPage view={route} />;
     case 'board':
-      return <BoardPage key={route.boardId} boardId={route.boardId} />;
+      return <BoardPage key={route.boardId} boardId={route.boardId} threadId={route.threadId} />;
     case 'join':
       return <JoinPage key={route.token} token={route.token} />;
     case 'account':

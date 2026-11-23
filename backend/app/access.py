@@ -8,7 +8,7 @@
 import uuid
 from enum import StrEnum
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, exists, or_, select, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -48,6 +48,39 @@ def access_from(board: Board, user: User, role: BoardRole | None) -> Access | No
         return ROLE_ACCESS[role]
     # С шаблона компании любой может создать свою доску, поэтому смотреть его могут все.
     return Access.VIEW if board.is_template else None
+
+
+def viewable_by(user: User) -> ColumnElement[bool]:
+    """Условие на boards: доску видно пользователю user. То же правило, что в access_from,
+    но в SQL — для запросов, где досок много (например, уведомления обо всех досках)."""
+    if user.role == Role.ADMIN:
+        return true()
+    return or_(
+        Board.owner_id == user.id,
+        Board.is_template.is_(True),
+        exists().where(BoardMember.board_id == Board.id, BoardMember.user_id == user.id),
+    )
+
+
+def can_open(board: Board) -> ColumnElement[bool]:
+    """Условие на users: пользователь может открыть доску board (то же правило, что access_from)."""
+    if board.is_template:
+        return true()
+    return or_(
+        User.role == Role.ADMIN,
+        User.id == board.owner_id,
+        User.id.in_(select(BoardMember.user_id).where(BoardMember.board_id == board.id)),
+    )
+
+
+async def people_with_access(
+    db: AsyncSession, board: Board, *where: ColumnElement[bool]
+) -> list[User]:
+    """Активные пользователи, которые могут открыть доску, по имени. where сужает выборку."""
+    people = await db.scalars(
+        select(User).where(User.is_active, can_open(board), *where).order_by(User.name)
+    )
+    return list(people)
 
 
 async def member_role(
