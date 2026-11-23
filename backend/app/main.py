@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app import __version__
 from app.api import (
     admin,
     auth,
@@ -16,6 +17,7 @@ from app.api import (
     files,
     folders,
     health,
+    metrics,
     notifications,
     sharing,
     sync,
@@ -27,6 +29,7 @@ from app.auth.dependencies import same_origin
 from app.auth.throttle import LoginGuard, LoginThrottle
 from app.core.config import Settings, get_settings
 from app.core.db import Database
+from app.core.metrics import Metrics, RequestContext
 from app.files import FileStore
 from app.sync.room import RoomManager, SavePolicy
 from app.sync.sockets import BoardSockets
@@ -52,6 +55,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     и освобождается при остановке, поэтому одно и то же приложение можно запускать повторно.
     """
     config = settings or get_settings()
+    # Показатели живут дольше одного запуска приложения: их обёртка подключается при сборке.
+    collected = Metrics()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -64,7 +69,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 version_interval=config.version_interval,
                 version_retention=config.version_retention,
             ),
+            metrics=collected,
         )
+        collected.watch(rooms=rooms.open_rooms, connections=rooms.open_connections)
         app.state.database = database
         app.state.rooms = rooms
         app.state.sockets = BoardSockets()
@@ -84,10 +91,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await rooms.shutdown()
             await database.dispose()
 
-    app = FastAPI(title="Whatever API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Whatever API", version=__version__, lifespan=lifespan)
     app.state.settings = config
+    app.state.metrics = collected
+    app.add_middleware(RequestContext, metrics=collected)
     app.exception_handler(RequestValidationError)(validation_failed)
     app.include_router(health.router, prefix="/api")
+    app.include_router(metrics.router, prefix="/api")
     # Изменяющие запросы принимаются только со страниц самого приложения.
     for router in (
         auth.router,

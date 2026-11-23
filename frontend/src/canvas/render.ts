@@ -104,22 +104,31 @@ function drawPeers(
 }
 
 /** Что нужно для кадра, кроме редактора. width и height — размер холста в CSS-пикселях. */
-export interface FrameOptions {
+export interface LayerSize {
   width: number;
   height: number;
   /** Сколько пикселей экрана в одном CSS-пикселе. */
   dpr: number;
   theme: Theme;
-  /** Другие участники: их курсоры и выделения. */
-  peers?: readonly Peer[];
+}
+
+export interface SceneOptions extends LayerSize {
   images?: ImageLookup;
 }
 
-/** Полная перерисовка кадра. Рисуются только элементы, попавшие в видимую область. */
-export function renderBoard(
+export interface OverlayOptions extends LayerSize {
+  /** Другие участники: их курсоры и выделения. */
+  peers?: readonly Peer[];
+}
+
+/**
+ * Слой сцены: фон, сетка и элементы, попавшие в видимую область. Он меняется только вместе
+ * с документом, камерой, темой или картинками.
+ */
+export function renderScene(
   ctx: CanvasRenderingContext2D,
   editor: Editor,
-  { width, height, dpr, theme, peers = [], images }: FrameOptions,
+  { width, height, dpr, theme, images }: SceneOptions,
 ): void {
   const { camera } = editor;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -127,9 +136,7 @@ export function renderBoard(
   ctx.fillRect(0, 0, width, height);
   drawGrid(ctx, camera, width, height, theme.grid);
 
-  const scale = dpr * camera.zoom;
-  ctx.setTransform(scale, 0, 0, scale, scale * camera.x, scale * camera.y);
-
+  setWorldTransform(ctx, editor, dpr);
   const topLeft = screenToWorld(camera, { x: 0, y: 0 });
   const bottomRight = screenToWorld(camera, { x: width, y: height });
   const viewport = {
@@ -139,6 +146,20 @@ export function renderBoard(
     h: bottomRight.y - topLeft.y,
   };
   drawScene(ctx, editor.page, theme, { viewport, editingId: editor.editingId, images });
+}
+
+/**
+ * Прозрачный слой поверх сцены: курсоры и выделения участников, своё выделение, штрих
+ * и рамка выделения. Чужой курсор движется 20 раз в секунду, и перерисовывается только он.
+ */
+export function renderOverlay(
+  ctx: CanvasRenderingContext2D,
+  editor: Editor,
+  { width, height, dpr, theme, peers = [] }: OverlayOptions,
+): void {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  setWorldTransform(ctx, editor, dpr);
 
   drawPeers(ctx, editor, peers, dpr, theme);
   drawSelection(ctx, editor, theme);
@@ -149,7 +170,14 @@ export function renderBoard(
     ctx.fillStyle = theme.marqueeFill;
     ctx.fillRect(m.x, m.y, m.w, m.h);
     ctx.strokeStyle = theme.selection;
-    ctx.lineWidth = 1 / camera.zoom;
+    ctx.lineWidth = 1 / editor.camera.zoom;
     ctx.strokeRect(m.x, m.y, m.w, m.h);
   }
+}
+
+/** Дальше рисуется в мировых координатах. */
+function setWorldTransform(ctx: CanvasRenderingContext2D, editor: Editor, dpr: number): void {
+  const { camera } = editor;
+  const scale = dpr * camera.zoom;
+  ctx.setTransform(scale, 0, 0, scale, scale * camera.x, scale * camera.y);
 }

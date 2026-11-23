@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload, undefer
 
 from app.core.config import get_settings
 from app.core.db import Database, Sessions
+from app.core.metrics import Metrics
 from app.models import Board, BoardUpdate, BoardVersion, User
 from app.sync.limits import AWARENESS_BURST, AWARENESS_MAX_BYTES, AWARENESS_PER_SECOND, RateLimit
 from app.sync.outbox import Outbox
@@ -163,6 +164,35 @@ async def test_history_is_compacted_when_the_room_closes(
         pass
     assert await stored_updates(sessions, board_id) == 1
     assert len(await restored(sessions, board_id)) == COMPACT_AFTER + 10
+
+
+async def test_history_is_compacted_while_the_board_stays_open(
+    sessions: Sessions, someone: uuid.UUID
+) -> None:
+    board_id = await new_board(sessions)
+    editor = Editor()
+    await store_history(sessions, board_id, editor, COMPACT_AFTER)
+    async with sessions() as session:
+        stored_last = await session.scalar(
+            select(func.max(BoardUpdate.created_at)).where(BoardUpdate.board_id == board_id)
+        )
+    rooms = RoomManager(sessions, POLICY)
+    async with rooms.connect(board_id, Connection(Recorder().send, someone)) as room:
+        conn = next(iter(room.connections))
+        await room.receive(conn, create_update_message(editor.set("one-more", 1)))
+        await asyncio.sleep(0.1)
+        # Сжатие прошло, хотя участник всё ещё на доске.
+        assert await stored_updates(sessions, board_id) == 1
+        async with sessions() as session:
+            snapshot_time = await session.scalar(
+                select(BoardUpdate.created_at).where(BoardUpdate.board_id == board_id)
+            )
+        # Снимок помечен временем последнего изменения, а не временем сжатия.
+        assert stored_last is not None
+        assert snapshot_time is not None
+        assert snapshot_time >= stored_last
+        assert snapshot_time <= datetime.now(UTC)
+    assert len(await restored(sessions, board_id)) == COMPACT_AFTER + 1
 
 
 async def test_failed_load_keeps_the_history(
@@ -548,3 +578,22 @@ async def test_oversized_or_too_frequent_presence_is_dropped(
             await room.receive(author_conn, presence(awareness, {"cursor": {"x": x, "y": 0}}))
         assert len(other.messages) == burst
         assert room.awareness.states[awareness.client_id]["cursor"]["x"] == burst - 1
+
+
+async def test_saves_and_compactions_are_counted(sessions: Sessions, someone: uuid.UUID) -> None:
+    board_id = await new_board(sessions)
+    editor = Editor()
+    await store_history(sessions, board_id, editor, COMPACT_AFTER)
+    metrics = Metrics()
+    rooms = RoomManager(sessions, POLICY, metrics=metrics)
+    metrics.watch(rooms=rooms.open_rooms, connections=rooms.open_connections)
+    sample = metrics.registry.get_sample_value
+    async with rooms.connect(board_id, Connection(Recorder().send, someone)) as room:
+        assert sample("whatever_rooms_open") == 1
+        assert sample("whatever_connections") == 1
+        conn = next(iter(room.connections))
+        await room.receive(conn, create_update_message(editor.set("shape", 1)))
+        await asyncio.sleep(0.1)
+    assert sample("whatever_board_saves_total", {"result": "ok"}) == 1
+    assert sample("whatever_board_compactions_total") == 1
+    assert sample("whatever_rooms_open") == 0

@@ -99,6 +99,55 @@ describe('BoardDocument', () => {
   });
 });
 
+describe('BoardDocument snapshots', () => {
+  it('replaces a moved element in place and keeps other pages untouched', () => {
+    const doc = new BoardDocument();
+    doc.add({ ...rect('a'), z: 1 });
+    doc.add({ ...rect('b'), z: 2 });
+    doc.add({ ...rect('c'), page: 'other', z: 3 });
+    const before = doc.list();
+    const other = doc.page('other').list();
+    const b = doc.get('b');
+
+    doc.update('a', { x: 40 });
+
+    expect(doc.list()).not.toBe(before);
+    expect(doc.list().map((el) => el.id)).toEqual(['a', 'b', 'c']);
+    expect(doc.get('a')).toMatchObject({ x: 40 });
+    expect(doc.get('b')).toBe(b);
+    expect(doc.page('other').list()).toBe(other);
+  });
+
+  it('sorts again when the drawing order changes', () => {
+    const doc = new BoardDocument();
+    doc.add({ ...rect('a'), z: 1 });
+    doc.add({ ...rect('b'), z: 2 });
+    doc.update('a', { z: 3 });
+    expect(doc.list().map((el) => el.id)).toEqual(['b', 'a']);
+  });
+
+  it('follows changes from other participants and drops a broken one', () => {
+    const alice = new BoardDocument();
+    const bob = new BoardDocument();
+    alice.doc.on('update', (update: Uint8Array) => {
+      Y.applyUpdate(bob.doc, update);
+    });
+    alice.add(rect('a'));
+    alice.add(rect('b'));
+    expect(bob.list().map((el) => el.id)).toEqual(['a', 'b']);
+
+    alice.update('b', { x: 7 });
+    expect(bob.get('b')).toMatchObject({ x: 7 });
+
+    // Поле сломал чужой клиент: элемент пропадает из снимка, остальные на месте.
+    const fields = alice.doc.getMap<Y.Map<unknown>>('elements').get('a');
+    fields?.set('w', 'широкий');
+    expect(bob.list().map((el) => el.id)).toEqual(['b']);
+    alice.remove(['b']);
+    expect(bob.size).toBe(0);
+  });
+});
+
 describe('BoardDocument pages', () => {
   it('has one implicit page until the list of pages changes', () => {
     const doc = new BoardDocument();

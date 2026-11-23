@@ -7,7 +7,7 @@ import { subscribeTheme } from '../ui/theme';
 import { screenToWorld } from './camera';
 import styles from './Board.module.css';
 import type { ImageCache } from './images';
-import { renderBoard } from './render';
+import { renderOverlay, renderScene } from './render';
 import { readTheme } from './scene';
 
 /** Курсор над холстом: стрелка для выделения, I-образный для текста, перекрестие для рисования. */
@@ -39,9 +39,13 @@ export interface BoardProps {
   onInsertFiles?: (files: File[], at: Point) => void;
 }
 
-/** Холст доски. Передаёт события в редактор и перерисовывает кадр, только когда что-то изменилось. */
+/**
+ * Холст доски. Передаёт события в редактор и перерисовывает кадр, только когда что-то
+ * изменилось, причём сцену — только когда изменилась она сама.
+ */
 export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: BoardProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sceneRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const acceptsFiles = onInsertFiles !== undefined;
   const insertFiles = useEffectEvent((files: File[], at: Point) => {
     onInsertFiles?.(files, at);
@@ -53,22 +57,19 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
   });
 
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const canvas = overlayRef.current;
+    const sceneCanvas = sceneRef.current;
     const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
+    const sceneCtx = sceneCanvas?.getContext('2d');
+    if (!canvas || !sceneCanvas || !ctx || !sceneCtx) return;
 
-    let frame = 0;
-    let dirty = true;
-    const requestDraw = () => {
-      dirty = true;
-    };
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = canvas.clientWidth * dpr;
-      canvas.height = canvas.clientHeight * dpr;
-      editor.setViewport({ width: canvas.clientWidth, height: canvas.clientHeight });
-    };
+    // Сцена перерисовывается, когда изменились документ, камера, тема или картинки;
+    // слой поверх неё — при любом изменении (выделение, штрих, чужие курсоры).
+    let sceneDirty = true;
+    let overlayDirty = true;
+    // Что было на сцене в прошлый раз. Снимок страницы и камера неизменяемы: новое значение —
+    // новый объект, поэтому хватает сравнения ссылок.
+    let drawn: { elements: unknown; camera: unknown; editingId: string | null } | null = null;
 
     // Положения указателя копятся до ближайшего кадра и отдаются редактору разом.
     let moves: Point[] = [];
@@ -80,20 +81,63 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       editor.pointerMoves(batch, { shift: moveShift });
     };
 
+    // Кадр запрашивается, только когда есть что рисовать: в простое поток не просыпается.
+    let frame = 0;
     const render = () => {
-      frame = requestAnimationFrame(render);
+      // Изменения от накопленных движений попадут в этот же кадр, нового не нужно.
       flushMoves();
-      if (!dirty) return;
-      dirty = false;
-      canvas.style.cursor = editor.spaceHeld ? 'grab' : cursorFor(editor.tool);
-      renderBoard(ctx, editor, {
+      frame = 0;
+      if (!sceneDirty && !overlayDirty) return;
+      const size = {
         width: canvas.clientWidth,
         height: canvas.clientHeight,
         dpr: window.devicePixelRatio || 1,
         theme: readTheme(canvas),
-        peers: presence?.peers() ?? [],
-        images: images?.get,
-      });
+      };
+      canvas.style.cursor = editor.spaceHeld ? 'grab' : cursorFor(editor.tool);
+      if (sceneDirty) {
+        renderScene(sceneCtx, editor, { ...size, images: images?.get });
+        drawn = {
+          elements: editor.page.list(),
+          camera: editor.camera,
+          editingId: editor.editingId,
+        };
+      }
+      renderOverlay(ctx, editor, { ...size, peers: presence?.peers() ?? [] });
+      sceneDirty = false;
+      overlayDirty = false;
+    };
+    const scheduleFrame = () => {
+      if (frame === 0) frame = requestAnimationFrame(render);
+    };
+    const requestScene = () => {
+      sceneDirty = true;
+      overlayDirty = true;
+      scheduleFrame();
+    };
+    const requestOverlay = () => {
+      overlayDirty = true;
+      scheduleFrame();
+    };
+    const onEditorChange = () => {
+      if (
+        drawn?.elements !== editor.page.list() ||
+        drawn.camera !== editor.camera ||
+        drawn.editingId !== editor.editingId
+      ) {
+        sceneDirty = true;
+      }
+      requestOverlay();
+    };
+
+    const resize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      for (const layer of [sceneCanvas, canvas]) {
+        layer.width = canvas.clientWidth * dpr;
+        layer.height = canvas.clientHeight * dpr;
+      }
+      editor.setViewport({ width: canvas.clientWidth, height: canvas.clientHeight });
+      requestScene();
     };
 
     const local = (e: { clientX: number; clientY: number }): Point => {
@@ -119,6 +163,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       const coalesced = 'getCoalescedEvents' in e ? e.getCoalescedEvents() : [];
       for (const ev of coalesced.length > 0 ? coalesced : [e]) moves.push(local(ev));
       moveShift = e.shiftKey;
+      scheduleFrame();
     };
     const onPointerUp = () => {
       // Жест заканчивается там, куда указатель успел дойти, даже если кадр ещё не наступил.
@@ -164,7 +209,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       if (notForBoard(e)) return;
       if (e.code === 'Space') {
         editor.spaceHeld = e.type === 'keydown';
-        requestDraw();
+        requestOverlay();
         e.preventDefault();
         return;
       }
@@ -178,10 +223,10 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       if (handled) e.preventDefault();
     };
 
-    const unsubscribe = editor.subscribe(requestDraw);
-    const unsubscribePresence = presence?.subscribe(requestDraw);
-    const unsubscribeImages = images?.subscribe(requestDraw);
-    const unsubscribeTheme = subscribeTheme(requestDraw);
+    const unsubscribe = editor.subscribe(onEditorChange);
+    const unsubscribePresence = presence?.subscribe(requestOverlay);
+    const unsubscribeImages = images?.subscribe(requestScene);
+    const unsubscribeTheme = subscribeTheme(requestScene);
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
 
@@ -203,7 +248,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
     }
     window.addEventListener('keydown', onKey, { signal });
     window.addEventListener('keyup', onKey, { signal });
-    frame = requestAnimationFrame(render);
+    scheduleFrame();
 
     return () => {
       cancelAnimationFrame(frame);
@@ -216,5 +261,12 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
     };
   }, [editor, presence, images, acceptsFiles]);
 
-  return <canvas ref={canvasRef} className={styles.canvas} aria-label="Холст доски" />;
+  // Два холста друг над другом: сцена внизу, курсоры и выделения сверху. События получает
+  // верхний.
+  return (
+    <div className={styles.board}>
+      <canvas ref={sceneRef} className={styles.layer} aria-hidden="true" />
+      <canvas ref={overlayRef} className={styles.layer} aria-label="Холст доски" />
+    </div>
+  );
 }

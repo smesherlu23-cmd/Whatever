@@ -1,0 +1,67 @@
+name: Release
+
+# Релиз по тегу v<версия>: образы в GitHub Container Registry и архив образов для сервера
+# без доступа в интернет, плюс страница релиза с записью из CHANGELOG.md.
+#
+#     git tag v0.2.0 && git push origin v0.2.0
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  WHATEVER_IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/whatever
+  # docker compose подставляет его в описание сервисов; для сборки образов он не нужен.
+  POSTGRES_PASSWORD: unused
+
+jobs:
+  release:
+    name: Images and release page
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Version from the tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Тег должен совпадать с версией в коде: иначе образ сообщал бы чужую версию.
+          grep -qx "__version__ = \"$version\"" backend/app/__init__.py
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build images
+        env:
+          WHATEVER_VERSION: ${{ steps.version.outputs.version }}
+        run: docker compose build backend frontend
+      - name: Push to GitHub Container Registry
+        env:
+          WHATEVER_VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker compose push backend frontend
+      - name: Archive for servers without internet access
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker pull postgres:16-alpine
+          docker save \
+            "$WHATEVER_IMAGE_PREFIX-backend:$VERSION" \
+            "$WHATEVER_IMAGE_PREFIX-frontend:$VERSION" \
+            postgres:16-alpine \
+            | gzip > "whatever-$VERSION-images.tar.gz"
+      - name: Release page
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Запись этой версии из CHANGELOG.md: от её заголовка до следующего.
+          awk -v v="$VERSION" '/^## /{found = index($0, "## " v " ") == 1; next} found' \
+            CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" "whatever-$VERSION-images.tar.gz" \
+            --title "Whatever $VERSION" --notes-file notes.md

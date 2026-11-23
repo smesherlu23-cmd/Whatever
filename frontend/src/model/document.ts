@@ -119,6 +119,27 @@ function copyMaps(from: Y.Map<unknown>, to: Y.Map<unknown>): void {
   });
 }
 
+/** Снимок, в котором элементы заменены на новые на тех же местах. Порядок не меняется. */
+function replaceInSnapshot(
+  previous: Snapshot,
+  replaced: ReadonlyMap<BoardElement, BoardElement>,
+): Snapshot {
+  if (replaced.size === 0) return previous;
+  const swap = (el: BoardElement) => replaced.get(el) ?? el;
+  const byId = new Map(previous.byId);
+  const pages = new Set<string>();
+  for (const after of replaced.values()) {
+    byId.set(after.id, after);
+    pages.add(after.page);
+  }
+  const byPage = new Map(previous.byPage);
+  for (const page of pages) {
+    const onPage = previous.byPage.get(page);
+    if (onPage) byPage.set(page, onPage.map(swap));
+  }
+  return { list: previous.list.map(swap), byId, byPage };
+}
+
 /**
  * Документ доски поверх Yjs. Каждый элемент хранится в своём Y.Map внутри общего
  * Y.Map("elements"), поэтому правки разных полей одного элемента от разных людей сливаются
@@ -133,6 +154,12 @@ export class BoardDocument {
   private readonly pageMaps: Y.Map<unknown>;
   private readonly undoManager: Y.UndoManager;
   private snapshotCache: Snapshot | null = null;
+  /** Прошлый снимок: новый собирается из него, меняются только изменённые элементы. */
+  private previous: Snapshot | null = null;
+  /** Разобранные элементы по ключу Yjs, чтобы не разбирать заново неизменившиеся. */
+  private readonly parsed = new Map<string, BoardElement>();
+  /** Ключи элементов, изменившихся после прошлого снимка; 'all' — разобрать всё заново. */
+  private dirty: Set<string> | 'all' = 'all';
   private pagesCache: readonly Page[] | null = null;
   private readonly pageViews = new Map<string, ElementSource>();
 
@@ -141,8 +168,16 @@ export class BoardDocument {
     this.elements = doc.getMap<unknown>('elements');
     this.pageMaps = doc.getMap<unknown>('pages');
     // Регистрируются первыми, чтобы остальные подписчики уже видели свежие снимки.
-    this.elements.observeDeep(() => {
-      this.snapshotCache = null;
+    this.elements.observeDeep((events) => {
+      for (const event of events) {
+        if (event instanceof Y.YMapEvent && event.target === this.elements) {
+          this.touch(...event.keysChanged);
+        } else {
+          // Изменилось поле элемента: первый шаг пути — ключ элемента.
+          const key = event.path[0];
+          if (typeof key === 'string') this.touch(key);
+        }
+      }
     });
     this.pageMaps.observeDeep(() => {
       this.pagesCache = null;
@@ -153,25 +188,76 @@ export class BoardDocument {
     });
   }
 
+  /** Элементы с ключами keys изменились: следующий снимок разберёт их заново. */
+  private touch(...keys: string[]): void {
+    if (this.dirty !== 'all') for (const key of keys) this.dirty.add(key);
+    this.snapshotCache = null;
+  }
+
+  /** Всё изменилось сразу (например, восстановили версию): снимок собирается заново. */
+  private touchAll(): void {
+    this.dirty = 'all';
+    this.snapshotCache = null;
+  }
+
+  /** Элемент под ключом key или undefined, если записи нет или она битая. */
+  private parseAt(key: string): BoardElement | undefined {
+    const map = this.elements.get(key);
+    // Элемент мог прийти от другого клиента: битые данные пропускаем, а не рисуем.
+    const element = isFieldMap(map) ? parseElement(map.toJSON()) : null;
+    return element ? Object.freeze(element) : undefined;
+  }
+
+  /**
+   * Снимок собирается из прошлого: разбираются только изменённые элементы. Если ни у одного
+   * не поменялись z, страница или id, порядок прежний и сортировать заново не нужно, а
+   * списки страниц, где ничего не менялось, остаются теми же объектами.
+   */
   private snapshot(): Snapshot {
-    if (!this.snapshotCache) {
-      const byId = new Map<string, BoardElement>();
-      this.elements.forEach((map) => {
-        // Элемент мог прийти от другого клиента: битые данные пропускаем, а не рисуем.
-        if (!isFieldMap(map)) return;
-        const element = parseElement(map.toJSON());
-        if (element) byId.set(element.id, Object.freeze(element));
+    if (this.snapshotCache) return this.snapshotCache;
+    const { previous, dirty } = this;
+    this.dirty = new Set();
+    if (dirty === 'all') {
+      this.parsed.clear();
+      this.elements.forEach((_map, key) => {
+        const element = this.parseAt(key);
+        if (element) this.parsed.set(key, element);
       });
-      const list = [...byId.values()].sort(byZ);
-      const byPage = new Map<string, BoardElement[]>();
-      for (const el of list) {
-        const onPage = byPage.get(el.page);
-        if (onPage) onPage.push(el);
-        else byPage.set(el.page, [el]);
-      }
-      this.snapshotCache = { list, byId, byPage };
     }
+    const replaced = new Map<BoardElement, BoardElement>();
+    let reorder = dirty === 'all' || previous === null;
+    for (const key of dirty === 'all' ? [] : dirty) {
+      const before = this.parsed.get(key);
+      const after = this.parseAt(key);
+      if (after) this.parsed.set(key, after);
+      else this.parsed.delete(key);
+      if (before === after) continue;
+      const samePlace =
+        after !== undefined &&
+        before?.z === after.z &&
+        before.page === after.page &&
+        before.id === after.id &&
+        previous?.byId.get(before.id) === before;
+      if (samePlace) replaced.set(before, after);
+      else reorder = true;
+    }
+    this.snapshotCache =
+      reorder || previous === null ? this.sortedSnapshot() : replaceInSnapshot(previous, replaced);
+    this.previous = this.snapshotCache;
     return this.snapshotCache;
+  }
+
+  private sortedSnapshot(): Snapshot {
+    const byId = new Map<string, BoardElement>();
+    for (const element of this.parsed.values()) byId.set(element.id, element);
+    const list = [...byId.values()].sort(byZ);
+    const byPage = new Map<string, BoardElement[]>();
+    for (const el of list) {
+      const onPage = byPage.get(el.page);
+      if (onPage) onPage.push(el);
+      else byPage.set(el.page, [el]);
+    }
+    return { list, byId, byPage };
   }
 
   // ---------- Элементы ----------
@@ -226,7 +312,7 @@ export class BoardDocument {
   add(element: BoardElement): void {
     this.transact(() => {
       this.elements.set(element.id, fieldMap(element));
-      this.snapshotCache = null;
+      this.touch(element.id);
     });
   }
 
@@ -238,7 +324,7 @@ export class BoardDocument {
         if (key === 'id' || key === 'kind' || key === 'page') continue;
         map.set(key, value);
       }
-      this.snapshotCache = null;
+      this.touch(id);
     });
   }
 
@@ -254,10 +340,11 @@ export class BoardDocument {
           const end: ArrowEnd = arrow[which];
           if (end.shapeId && removed.has(end.shapeId)) {
             fieldsAt(this.elements, arrow.id)?.set(which, { x: end.x, y: end.y });
+            this.touch(arrow.id);
           }
         }
       }
-      this.snapshotCache = null;
+      this.touch(...removed);
     });
   }
 
@@ -361,7 +448,7 @@ export class BoardDocument {
       this.materializePages();
       this.pageMaps.delete(id);
       for (const key of elements) this.elements.delete(key);
-      this.snapshotCache = null;
+      this.touch(...elements);
     });
     return true;
   }
@@ -384,7 +471,7 @@ export class BoardDocument {
       this.pageMaps.set(copyId, fieldMap({ name, order: 0 }));
       this.placePage(copyId, pages, index + 1);
       for (const copy of copies) this.elements.set(copy.id, fieldMap(copy));
-      this.snapshotCache = null;
+      this.touch(...copies.map((copy) => copy.id));
     });
     return copyId;
   }
@@ -400,7 +487,7 @@ export class BoardDocument {
     this.transact(() => {
       copyMaps(version.elements, this.elements);
       copyMaps(version.pageMaps, this.pageMaps);
-      this.snapshotCache = null;
+      this.touchAll();
     });
     this.stopCapturing();
   }

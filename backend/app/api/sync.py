@@ -11,6 +11,7 @@ from app.auth.dependencies import is_same_origin
 from app.auth.sessions import COOKIE_NAME, user_for_token
 from app.core.config import Settings
 from app.core.db import Database
+from app.core.metrics import Metrics
 from app.models import Board
 from app.sync.outbox import Outbox
 from app.sync.room import Connection, RoomManager
@@ -70,6 +71,7 @@ async def _admit(websocket: WebSocket, board_id: uuid.UUID) -> _Admitted:
 async def board_socket(websocket: WebSocket, board_id: uuid.UUID) -> None:
     rooms: RoomManager = websocket.app.state.rooms
     sockets: BoardSockets = websocket.app.state.sockets
+    metrics: Metrics = websocket.app.state.metrics
     try:
         admitted = await _admit(websocket, board_id)
     except _RejectedError as rejected:
@@ -82,6 +84,7 @@ async def board_socket(websocket: WebSocket, board_id: uuid.UUID) -> None:
     closing: set[asyncio.Task[None]] = set()
 
     def disconnect_slow_client() -> None:
+        metrics.slow_clients.inc()
         # Закрытие идёт своей задачей: оно тоже может ждать медленного клиента.
         task = asyncio.create_task(websocket.close(code=SLOW_CLIENT))
         closing.add(task)

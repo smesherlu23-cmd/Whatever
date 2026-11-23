@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ADMIN, MEMBER, signedIn, withAuth } from '../testing/auth';
 import { UserMenu } from './UserMenu';
+import { APP_VERSION } from '../config';
 
 function open(name: string) {
   fireEvent.click(screen.getByRole('button', { name }));
@@ -16,6 +17,7 @@ describe('UserMenu', () => {
       '/account',
     );
     expect(screen.getByRole('link', { name: 'Пользователи' }).getAttribute('href')).toBe('/admin');
+    expect(screen.getByText(`Whatever ${APP_VERSION}`)).toBeTruthy();
   });
 
   it('hides the user list from regular users', () => {

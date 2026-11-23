@@ -1,0 +1,10 @@
+{
+  // Сквозные тесты работают в Node (Playwright), а не в браузере: свои типы окружения.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "jsx": "preserve",
+    "types": ["node"]
+  },
+  "include": ["."]
+}

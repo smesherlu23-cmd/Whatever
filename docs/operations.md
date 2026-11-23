@@ -92,8 +92,36 @@ WHATEVER_TRUSTED_PROXY=172.16.0.0/12        # адрес прокси, как е
 
 ## Обновление
 
+Что изменилось в каждой версии и нужно ли что-то делать при обновлении — в
+[CHANGELOG.md](../CHANGELOG.md). Установленную версию показывают `/api/health`
+и меню пользователя в интерфейсе.
+
+**Готовые образы** (рекомендуется). К каждому релизу CI собирает образы и публикует их
+в GitHub Container Registry, так что сервер ничего не собирает и получает ровно те образы,
+что прошли проверки. Один раз добавьте в `.env`:
+
+```bash
+WHATEVER_IMAGE_PREFIX=ghcr.io/smesherlu23-cmd/whatever
+```
+
+и для каждого обновления укажите версию:
+
 ```bash
 make backup                                 # копия перед обновлением
+git fetch --tags && git checkout v0.2.0     # docker-compose.yml и скрипты этой версии
+sed -i 's/^WHATEVER_VERSION=.*/WHATEVER_VERSION=0.2.0/' .env   # или впишите строку
+docker compose pull
+docker compose up -d --no-build --wait --remove-orphans
+```
+
+**Сервер без доступа в интернет.** На странице релиза на GitHub лежит архив
+`whatever-<версия>-images.tar.gz` со всеми образами. Перенесите его на сервер и загрузите:
+`docker load -i whatever-0.2.0-images.tar.gz`, дальше — как выше, без `docker compose pull`.
+
+**Сборка на сервере** из исходников (без `WHATEVER_IMAGE_PREFIX` и `WHATEVER_VERSION`):
+
+```bash
+make backup
 git pull
 docker compose up -d --build --wait --remove-orphans
 ```
@@ -200,6 +228,38 @@ curl -s http://localhost:8080/api/health    # 200 — всё в порядке, 
 Журналы контейнеров ограничены: до 5 файлов по 10 МБ на сервис. Для сборщиков журналов
 (Loki, ELK, Vector) включите `WHATEVER_LOG_FORMAT=json`: каждая запись станет одной строкой
 JSON с временем в UTC. Успешные проверки здоровья в журнал доступа не пишутся.
+
+У каждого запроса есть id: nginx передаёт его бэкенду, бэкенд пишет его в каждую запись
+журнала, сделанную во время запроса (`[3f2a…]` в тексте, поле `request_id` в JSON),
+и возвращает в заголовке ответа `X-Request-ID`. Если пользователь сообщил об ошибке и
+прислал этот заголовок из инструментов разработчика, запрос находится одной командой:
+`docker compose logs backend | grep <id>`.
+
+### Показатели для Prometheus
+
+Бэкенд отдаёт показатели в формате Prometheus на `/api/metrics`, если в `.env` задан
+токен `WHATEVER_METRICS_TOKEN` (без него адрес отвечает 404):
+
+```yaml
+scrape_configs:
+  - job_name: whatever
+    scheme: https
+    authorization:
+      credentials: <WHATEVER_METRICS_TOKEN>
+    static_configs:
+      - targets: ["whatever.example.local"]
+    metrics_path: /api/metrics
+```
+
+| Показатель | Что значит |
+| --- | --- |
+| `whatever_rooms_open`, `whatever_connections` | открытые доски и подключения к ним |
+| `whatever_http_request_duration_seconds` | время ответа API по методу, шаблону пути и коду |
+| `whatever_board_saves_total{result}`, `whatever_board_save_duration_seconds` | записи изменений досок в базу и их время; рост `result="error"` — проблемы с базой |
+| `whatever_board_compactions_total` | сжатия истории досок |
+| `whatever_slow_client_disconnects_total` | участники, отключённые за отставание |
+| `whatever_presence_dropped_total` | отброшенные сообщения присутствия (слишком частые или большие) |
+| `process_*`, `python_gc_*` | память, процессор и сборка мусора процесса бэкенда |
 
 ## Смена пароля базы
 

@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from 'react';
 import { ROLE_NAMES } from '../auth/accounts';
 import { useAuth } from '../auth/context';
+import { APP_VERSION } from '../config';
 import { Link } from './Link';
 import { useDismiss } from './useDismiss';
 import styles from './UserMenu.module.css';
@@ -63,6 +64,7 @@ export function UserMenu() {
               Выйти
             </button>
           </nav>
+          <p className={styles.version}>Whatever {APP_VERSION}</p>
         </div>
       )}
       {error && (

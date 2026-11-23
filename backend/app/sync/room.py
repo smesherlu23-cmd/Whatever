@@ -9,6 +9,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
@@ -29,10 +30,11 @@ from pycrdt import (
     merge_updates,
     read_message,
 )
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 
 from app.board_content import read_state
 from app.core.db import Sessions
+from app.core.metrics import Metrics
 from app.models import Board, BoardUpdate, BoardVersion
 from app.sync.limits import AWARENESS_BURST, AWARENESS_MAX_BYTES, AWARENESS_PER_SECOND, RateLimit
 from app.versions import save_version
@@ -57,7 +59,8 @@ class SavePolicy:
 
     Изменения за delay секунд пишутся одной строкой: перетаскивание фигуры даёт десятки
     изменений в секунду, и писать каждое по отдельности было бы расточительно. Когда записей
-    истории больше compact_after, при закрытии комнаты они сжимаются в один снимок.
+    истории больше compact_after, они сжимаются в один снимок: и в открытой комнате (доска
+    может быть открыта весь день), и при её закрытии.
 
     Версия доски сохраняется через version_interval после первого изменения, которого нет
     в прошлой версии, и при закрытии комнаты, если с тех пор доску меняли. Автоматические
@@ -104,16 +107,25 @@ class Room:
     и при переподключении протокол Yjs досылает серверу всё, чего у него нет.
     """
 
-    def __init__(self, board_id: uuid.UUID, sessions: Sessions, policy: SavePolicy) -> None:
+    def __init__(
+        self,
+        board_id: uuid.UUID,
+        sessions: Sessions,
+        policy: SavePolicy,
+        metrics: Metrics | None = None,
+    ) -> None:
         self.board_id = board_id
         self.sessions = sessions
         self.policy = policy
+        self.metrics = metrics or Metrics()
         self.doc: Doc[Any] = Doc()
         self.awareness = Awareness(self.doc)
         self.connections: set[Connection] = set()
         self.loaded = False
         self._received: list[bytes] = []
         self._unsaved: list[bytes] = []
+        # Сколько строк истории доски в базе: по нему комната решает, когда сжимать.
+        self._stored = 0
         self._save_timer: asyncio.TimerHandle | None = None
         # Записи в базу, которые идут сейчас: закрытие комнаты их дожидается.
         self._writes: set[asyncio.Task[None]] = set()
@@ -133,13 +145,9 @@ class Room:
 
     async def load(self) -> None:
         async with self.sessions() as session:
-            rows = await session.scalars(
-                select(BoardUpdate.data)
-                .where(BoardUpdate.board_id == self.board_id)
-                .order_by(BoardUpdate.id)
-            )
-            for data in rows:
-                self.doc.apply_update(data)
+            # История склеивается в отдельном потоке: после сбоя её может быть много.
+            state = await read_state(session, self.board_id)
+            self._stored = await session.scalar(self._count_stored()) or 0
             last_change = await session.scalar(
                 select(func.max(BoardUpdate.created_at)).where(
                     BoardUpdate.board_id == self.board_id
@@ -150,6 +158,7 @@ class Room:
                     BoardVersion.board_id == self.board_id
                 )
             )
+        self.doc.apply_update(state)
         self._received.clear()
         # Содержимое записано позже последней версии: доску создали по шаблону, её версии
         # удалены по сроку или прошлый сеанс не успел сохранить версию.
@@ -164,12 +173,23 @@ class Room:
             if not self._unsaved:
                 return
             updates, self._unsaved = self._unsaved, []
+            started = time.perf_counter()
             try:
                 await self._persist(merge_updates(*updates))
             except BaseException:
                 # Вернуть изменения в очередь, чтобы следующая попытка их записала.
                 self._unsaved[:0] = updates
+                self.metrics.board_saves.labels(result="error").inc()
                 raise
+            self.metrics.board_saves.labels(result="ok").inc()
+            self.metrics.board_save_seconds.observe(time.perf_counter() - started)
+            self._stored += 1
+            if self._stored > self.policy.compact_after and not self._closed:
+                try:
+                    await self._compact()
+                except Exception:
+                    # Изменения уже записаны; сжатие повторится после следующей записи.
+                    log.warning("board %s: compaction failed", self.board_id, exc_info=True)
 
     async def _persist(self, data: bytes) -> None:
         async with self.sessions() as session:
@@ -228,16 +248,37 @@ class Room:
 
     async def compact(self) -> None:
         """Заменяет накопленные дельты одним снимком, чтобы доска открывалась быстрее."""
+        async with self._save_lock:
+            await self._compact()
+
+    def _count_stored(self) -> Select[int]:
+        return select(func.count()).where(BoardUpdate.board_id == self.board_id)
+
+    async def _compact(self) -> None:
+        # Вызывается под _save_lock: пока идёт сжатие, комната ничего не дописывает. Снимок
+        # берётся из документа в памяти, а в нём есть всё записанное (и ещё не записанное).
         async with self.sessions() as session:
-            count = await session.scalar(
-                select(func.count()).where(BoardUpdate.board_id == self.board_id)
-            )
+            count = await session.scalar(self._count_stored())
             if not count or count <= self.policy.compact_after:
+                self._stored = count or 0
                 return
+            # Снимок помечается временем последнего изменения, а не сжатия: по этому времени
+            # загрузка решает, есть ли на доске то, чего нет ни в одной версии.
+            last_change = await session.scalar(
+                select(func.max(BoardUpdate.created_at)).where(
+                    BoardUpdate.board_id == self.board_id
+                )
+            )
             await session.execute(delete(BoardUpdate).where(BoardUpdate.board_id == self.board_id))
-            session.add(BoardUpdate(board_id=self.board_id, data=self.doc.get_update()))
+            session.add(
+                BoardUpdate(
+                    board_id=self.board_id, data=self.doc.get_update(), created_at=last_change
+                )
+            )
             await session.commit()
-            log.info("board %s compacted from %d updates", self.board_id, count)
+        self._stored = 1
+        self.metrics.compactions.inc()
+        log.info("board %s compacted from %d updates", self.board_id, count)
 
     # ---------- Версии ----------
 
@@ -356,6 +397,7 @@ class Room:
         # Присутствие обновляется постоянно, так что пропущенное сообщение заменит следующее,
         # а клиент к тому же повторяет своё состояние каждые 15 секунд.
         if len(message) > AWARENESS_MAX_BYTES or not conn.awareness_limit.allow():
+            self.metrics.presence_dropped.inc()
             log.debug("board %s: dropped an oversized or too frequent presence", self.board_id)
             return
         self.awareness.apply_awareness_update(read_message(message[1:]), conn)
@@ -426,9 +468,12 @@ class RoomManager:
     клиент не задерживают подключение к другим доскам.
     """
 
-    def __init__(self, sessions: Sessions, policy: SavePolicy) -> None:
+    def __init__(
+        self, sessions: Sessions, policy: SavePolicy, *, metrics: Metrics | None = None
+    ) -> None:
         self._sessions = sessions
         self._policy = policy
+        self._metrics = metrics or Metrics()
         self._rooms: dict[uuid.UUID, _OpenRoom] = {}
         self._closing: dict[uuid.UUID, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
@@ -446,7 +491,7 @@ class RoomManager:
         async with self._lock:
             entry = self._rooms.get(board_id)
             if entry is None:
-                room = Room(board_id, self._sessions, self._policy)
+                room = Room(board_id, self._sessions, self._policy, self._metrics)
                 entry = _OpenRoom(room, asyncio.create_task(self._load(room)))
                 self._rooms[board_id] = entry
             entry.room.connections.add(conn)
@@ -547,3 +592,6 @@ class RoomManager:
 
     def open_rooms(self) -> int:
         return len(self._rooms)
+
+    def open_connections(self) -> int:
+        return sum(len(entry.room.connections) for entry in self._rooms.values())

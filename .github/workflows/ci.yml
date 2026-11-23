@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+# Действия закреплены по SHA коммита, а не по тегу: тег можно передвинуть на другой код.
+# Обновляет их Dependabot (.github/dependabot.yml).
+
 # Новый пуш в ту же ветку отменяет устаревшую проверку.
 concurrency:
   group: ci-${{ github.ref }}
@@ -39,8 +42,8 @@ jobs:
       POSTGRES_HOST: localhost
       POSTGRES_PASSWORD: ci-password
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
@@ -69,8 +72,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
@@ -87,18 +90,38 @@ jobs:
       - name: Build
         run: npm run build
 
+  audit:
+    name: Dependencies (known vulnerabilities)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+      # Проверяется то, что попадает в образы: зависимости без инструментов разработки.
+      - name: Backend (pip-audit)
+        working-directory: backend
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit --strict --disable-pip --require-hashes -r "$RUNNER_TEMP/requirements.txt"
+      - name: Frontend (npm audit)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
   docker:
     name: Docker (lint, build, start, health)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint backend Dockerfile
-        uses: hadolint/hadolint-action@v3.5.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: backend/Dockerfile
       - name: Lint frontend Dockerfile
-        uses: hadolint/hadolint-action@v3.5.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: frontend/Dockerfile
       # Пароль со спецсимволами проверяет, что адрес базы собирается правильно.
@@ -108,12 +131,47 @@ jobs:
           sed -i 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci/p@ss:word|' .env
       - name: Build and start
         run: docker compose up --build --detach --wait --wait-timeout 180
+      # Уязвимости в собранных образах: в пакетах базового образа и в зависимостях. Падает,
+      # только если для уязвимости уже есть исправление, то есть её можно устранить.
+      - name: Scan backend image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: whatever-backend:dev
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan frontend image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: whatever-frontend:dev
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
       - name: Check the running application
         run: |
           curl --fail --silent --show-error http://localhost:8080/api/health
           curl --fail --silent --show-error --output /dev/null http://localhost:8080/
           test "$(docker compose exec -T backend id -u)" != 0
           test "$(docker compose exec -T frontend id -u)" != 0
+      # Сквозные тесты в настоящем браузере против запущенных образов. До проверки резервной
+      # копии: она стирает базу, а входов вместе с тестами меньше предела nginx (10 в минуту).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: End-to-end tests (Playwright)
+        env:
+          E2E_ADMIN_LOGIN: e2e-admin
+          E2E_ADMIN_PASSWORD: e2e-admin-password
+        run: |
+          printf '%s\n' "$E2E_ADMIN_PASSWORD" | docker compose exec -T backend \
+            python -m app.cli create-admin "$E2E_ADMIN_LOGIN" --password-stdin
+          cd frontend
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run e2e
       # Копия, сделанная сервисом backup, восстанавливается в чистую установку: без такой
       # проверки резервная копия — только надежда.
       - name: Back up, wipe and restore

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app import __version__
 from app.core.db import DbSession
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,8 @@ DATABASE_TIMEOUT_SECONDS = 2
 class Health(BaseModel):
     status: Literal["ok", "degraded"]
     database: Literal["ok", "unavailable"]
+    # Какая версия установлена: её спрашивают первой, когда что-то пошло не так.
+    version: str = __version__
 
 
 @router.get(

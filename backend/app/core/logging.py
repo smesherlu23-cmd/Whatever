@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.config import LogFormat, LogLevel
+from app.core.metrics import request_id
 
 # Шумные библиотеки, которым достаточно предупреждений даже при DEBUG приложения.
 _QUIET_LOGGERS = ("sqlalchemy.engine", "asyncio")
@@ -25,9 +26,20 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        rid = request_id.get()
+        if rid is not None:
+            entry["request_id"] = rid
         if record.exc_info:
             entry["exception"] = self.formatException(record.exc_info)
         return json.dumps(entry, ensure_ascii=False)
+
+
+class AddRequestId(logging.Filter):
+    """Добавляет к записи id запроса, во время которого она сделана (или «-»)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id.get() or "-"
+        return True
 
 
 class SkipHealthChecks(logging.Filter):
@@ -52,15 +64,21 @@ def logging_config(level: LogLevel, fmt: LogFormat) -> dict[str, Any]:
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
-            LogFormat.TEXT.value: {"format": "%(asctime)s %(levelname)-7s %(name)s: %(message)s"},
+            LogFormat.TEXT.value: {
+                "format": "%(asctime)s %(levelname)-7s %(name)s [%(request_id)s]: %(message)s"
+            },
             LogFormat.JSON.value: {"()": JsonFormatter},
         },
-        "filters": {"skip_health_checks": {"()": SkipHealthChecks}},
+        "filters": {
+            "add_request_id": {"()": AddRequestId},
+            "skip_health_checks": {"()": SkipHealthChecks},
+        },
         "handlers": {
             "stderr": {
                 "class": "logging.StreamHandler",
                 "formatter": fmt.value,
                 "stream": "ext://sys.stderr",
+                "filters": ["add_request_id"],
             },
         },
         "root": {"handlers": ["stderr"], "level": level.value},

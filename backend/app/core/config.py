@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     """Сколько мегабайт файлов можно загрузить на одну доску. Предел не даёт одной доске
     занять весь диск сервера."""
 
+    # ---------- Наблюдение ----------
+
+    metrics_token: SecretStr | None = None
+    """Токен для /api/metrics (показатели в формате Prometheus): Prometheus присылает его
+    в заголовке Authorization: Bearer. Без токена адрес отвечает 404."""
+
     # ---------- Журнал ----------
 
     log_level: LogLevel = LogLevel.INFO
