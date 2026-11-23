@@ -267,6 +267,8 @@ function NewThread({
       <h3 className={styles.subtitle}>Новое обсуждение</h3>
       <p className={styles.where}>{target ? `К ${elementName(target)}` : 'В точке доски'}</p>
       <CommentComposer
+        // Метку переставили: поле снова получает фокус, иначе набранное ушло бы на доску.
+        key={`${draft.page}:${draft.x}:${draft.y}`}
         label="Текст обсуждения"
         placeholder="Вопрос или замечание"
         submitLabel="Отправить"

@@ -102,6 +102,8 @@ type Interaction =
   | { type: 'create'; id: string; origin: Point }
   | { type: 'arrowEnd'; id: string; which: 'start' | 'end'; created: boolean }
   | { type: 'marquee'; origin: Point; current: Point; base: Set<string> }
+  /** Метка обсуждения встанет, когда кнопку отпустят. */
+  | { type: 'comment'; at: Point }
   | { type: 'draw' };
 
 export interface EditorState {
@@ -327,6 +329,11 @@ export class Editor {
     this.emit();
   }
 
+  /** Выделяет всё на открытой странице. */
+  selectAll(): void {
+    this.select(this.page.list().map((el) => el.id));
+  }
+
   setCamera(camera: Camera): void {
     this.camera = camera;
     this.cameraPlaced = true;
@@ -508,11 +515,16 @@ export class Editor {
     if (tool === 'pen') this.beginStroke(world);
     else if (tool === 'arrow') this.beginArrow(world);
     else if (tool === 'select') this.beginSelect(world, input.shift ?? false);
-    else if (tool === 'comment') this.placeComment(world);
+    else if (tool === 'comment') this.interaction = { type: 'comment', at: world };
     else if (isShapeTool(tool)) this.beginCreate(tool, world);
   }
 
-  /** Метка ставится одним щелчком, после чего снова выбрано выделение. */
+  /**
+   * Метка ставится одним щелчком, после чего снова выбрано выделение. Ставится она, когда
+   * кнопку отпускают, а не нажимают: нажатие на холсте уводит фокус со страницы, и поле нового
+   * обсуждения, открытое по нажатию, сразу теряло бы его. Тогда набранный текст уходил бы
+   * в сочетания клавиш доски.
+   */
   private placeComment(world: Point): void {
     const place: CommentPlace = { page: this.pageId, point: world, element: this.elementAt(world) };
     this.tool = 'select';
@@ -676,6 +688,7 @@ export class Editor {
     if (it.type === 'arrowEnd' && it.created) this.finishArrow(it.id);
     if (it.type === 'marquee') this.marquee = null;
     if (it.type === 'draw') this.finishStroke();
+    if (it.type === 'comment') this.placeComment(it.at);
     this.doc.stopCapturing();
     this.emit();
   }
@@ -709,7 +722,9 @@ export class Editor {
     }
     this.tool = 'select';
     this.preset = null;
-    if (el.kind === 'text') this.startEditing(id);
+    // Текст и стикер ставят, чтобы сразу написать: ввод открывается сам. Иначе набранные буквы
+    // ушли бы в сочетания клавиш и молча сменили бы инструмент.
+    if (el.kind === 'text' || el.kind === 'sticky') this.startEditing(id);
   }
 
   private finishArrow(id: string): void {
@@ -820,6 +835,21 @@ export class Editor {
       this.pointerDown(screen);
       this.pointerUp();
     }
+  }
+
+  /**
+   * Правый щелчок перед контекстным меню. Меню действует на выделенное, поэтому элемент под
+   * указателем выделяется, если его ещё нет в выделении, а щелчок по пустому месту выделение
+   * снимает. Начатый ввод текста сохраняется, инструмент сменяется на выделение.
+   */
+  contextMenu(screen: Point): void {
+    this.stopEditing();
+    this.tool = 'select';
+    this.preset = null;
+    const hit = this.elementAt(this.toWorld(screen));
+    if (!hit) this.selection = new Set();
+    else if (!this.selection.has(hit.id)) this.selection = new Set([hit.id]);
+    this.emit();
   }
 
   // ---------- Текст ----------

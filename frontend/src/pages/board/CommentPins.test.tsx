@@ -53,7 +53,7 @@ function setup({
 
 const pins = () => screen.queryAllByRole('button');
 const placeOf = (element: Element | undefined) =>
-  element instanceof HTMLElement ? element.style.transform : null;
+  element instanceof HTMLElement ? element.style.translate : null;
 
 describe('CommentPins', () => {
   it('marks the open discussions and moves them with their shapes and the camera', () => {
@@ -63,21 +63,21 @@ describe('CommentPins', () => {
     expect(onShape?.getAttribute('aria-label')).toBe('Обсуждение: Анна Смирнова: Почему два?');
     expect(onShape?.getAttribute('title')).toBe('Анна Смирнова и ещё ответов: 1');
     expect(onShape?.textContent).toBe('А');
-    expect(placeOf(onShape)).toBe('translate(200px, 150px)');
+    expect(placeOf(onShape)).toBe('200px 150px');
     expect(inSpace?.getAttribute('title')).toBe('Удалённый пользователь');
-    expect(placeOf(inSpace)).toBe('translate(500px, 400px)');
+    expect(placeOf(inSpace)).toBe('500px 400px');
 
     // Метка стоит посередине фигуры и остаётся там, когда фигуру двигают.
     act(() => {
       editor.doc.update('server', { x: 300 });
     });
-    expect(placeOf(pins()[0])).toBe('translate(400px, 150px)');
+    expect(placeOf(pins()[0])).toBe('400px 150px');
 
     act(() => {
       editor.setCamera({ x: -100, y: 0, zoom: 2 });
     });
-    expect(placeOf(pins()[0])).toBe('translate(600px, 300px)');
-    expect(placeOf(pins()[1])).toBe('translate(800px, 800px)');
+    expect(placeOf(pins()[0])).toBe('600px 300px');
+    expect(placeOf(pins()[1])).toBe('800px 800px');
   });
 
   it('opens a discussion from its pin', () => {
@@ -94,7 +94,7 @@ describe('CommentPins', () => {
     expect(resolved.hasAttribute('data-selected')).toBe(true);
     const placing = container.querySelector('[data-draft]');
     expect(placing?.textContent).toBe('+');
-    expect(placeOf(placing ?? undefined)).toBe('translate(10px, 20px)');
+    expect(placeOf(placing ?? undefined)).toBe('10px 20px');
   });
 
   it('shows only the pins of the open page', () => {
@@ -106,5 +106,17 @@ describe('CommentPins', () => {
     });
     expect(pins()).toHaveLength(0);
     expect(container.querySelector('[data-draft]')).toBeNull();
+  });
+
+  it('passes the mouse wheel over a pin to the board', () => {
+    const { editor } = setup();
+    const pin = screen.getByRole('button', { name: /Что здесь будет\?/ });
+    // Прокрутка двигает доску.
+    fireEvent.wheel(pin, { deltaX: 10, deltaY: 30 });
+    expect(editor.camera).toMatchObject({ x: -10, y: -30, zoom: 1 });
+    // Ctrl+колесо масштабирует доску, а не страницу браузера.
+    const zoom = fireEvent.wheel(pin, { deltaY: -100, ctrlKey: true });
+    expect(zoom).toBe(false);
+    expect(editor.camera.zoom).toBeGreaterThan(1);
   });
 });

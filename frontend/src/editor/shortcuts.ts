@@ -33,7 +33,7 @@ const CTRL_COMMANDS: Partial<Record<string, (editor: Editor, shift: boolean) => 
     else editor.undo();
   },
   y: (editor) => editor.redo(),
-  a: (editor) => editor.select(editor.page.list().map((el) => el.id)),
+  a: (editor) => editor.selectAll(),
   d: (editor) => editor.duplicateSelection(),
   // Масштаб доски вместо масштаба страницы браузера.
   '=': (editor) => editor.zoomBy(ZOOM_STEP),

@@ -283,6 +283,9 @@ describe('Editor', () => {
     editor.setTool('comment');
     expect(editor.selection.size).toBe(0);
     editor.pointerDown({ x: 50, y: 40 });
+    // Метка встаёт, когда кнопку отпускают: к этому времени браузер уже передвинул фокус,
+    // и поле нового обсуждения его не потеряет.
+    expect(placed).not.toHaveBeenCalled();
     editor.pointerUp();
     expect(placed).toHaveBeenCalledExactlyOnceWith({
       page: DEFAULT_PAGE,
@@ -296,6 +299,7 @@ describe('Editor', () => {
 
     editor.setTool('comment');
     editor.pointerDown({ x: 400, y: 400 });
+    editor.pointerUp();
     expect(placed).toHaveBeenLastCalledWith({
       page: DEFAULT_PAGE,
       point: { x: 400, y: 400 },
@@ -305,6 +309,7 @@ describe('Editor', () => {
     stop();
     editor.setTool('comment');
     editor.pointerDown({ x: 400, y: 400 });
+    editor.pointerUp();
     expect(placed).toHaveBeenCalledTimes(2);
   });
 
@@ -446,6 +451,51 @@ describe('Editor', () => {
     expect(shapes(editor.doc)[0]?.text).toBe('База данных');
   });
 
+  it('selects what is under the pointer before the context menu opens', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    drag(editor, [0, 0], [100, 100]);
+    editor.setTool('rectangle');
+    drag(editor, [200, 0], [300, 100]);
+    const [first, second] = shapes(editor.doc).map((el) => el.id);
+    editor.select([defined(first), defined(second)]);
+
+    // Щелчок по выделенному оставляет всё выделение: меню действует на него.
+    editor.contextMenu({ x: 50, y: 50 });
+    expect(editor.selection).toEqual(new Set([first, second]));
+    // Щелчок по другому элементу выделяет только его, по пустому месту — снимает выделение.
+    editor.select([defined(first)]);
+    editor.contextMenu({ x: 250, y: 50 });
+    expect(editor.selection).toEqual(new Set([second]));
+    editor.contextMenu({ x: 500, y: 500 });
+    expect(editor.selection.size).toBe(0);
+
+    // Начатый ввод сохраняется, а инструмент сменяется на выделение.
+    editor.startEditing(defined(first));
+    editor.setEditingText('Сервер');
+    editor.setTool('ellipse');
+    editor.contextMenu({ x: 50, y: 50 });
+    expect(editor.editingId).toBeNull();
+    expect(editor.tool).toBe('select');
+    expect(shapes(editor.doc)[0]?.text).toBe('Сервер');
+    expect(editor.selection).toEqual(new Set([first]));
+  });
+
+  it('opens typing right away on a new sticky note, which stays even when left empty', () => {
+    const editor = new Editor();
+    editor.setTool('sticky');
+    drag(editor, [0, 0], [150, 150]);
+    const sticky = defined(shapes(editor.doc)[0]);
+    expect(editor.editingId).toBe(sticky.id);
+    editor.stopEditing();
+    expect(editor.doc.size).toBe(1);
+
+    // Остальные фигуры чаще ставят без подписи: ввод не открывается.
+    editor.setTool('rectangle');
+    drag(editor, [200, 0], [300, 100]);
+    expect(editor.editingId).toBeNull();
+  });
+
   it('saves the typed text however editing ends', () => {
     const editor = new Editor();
     editor.setTool('rectangle');
@@ -536,6 +586,7 @@ describe('Editor in read-only mode', () => {
     expect(editor.keyDown({ key: 'с', code: 'KeyC' })).toBe(true);
     expect(editor.tool).toBe('comment');
     editor.pointerDown({ x: 10, y: 10 });
+    editor.pointerUp();
     expect(placed).toHaveBeenCalledWith(expect.objectContaining({ element: rect }));
   });
 

@@ -95,6 +95,27 @@ describe('BoardPage', () => {
     );
   });
 
+  it('puts the name back on Escape without renaming the board', async () => {
+    const fetch = serveBoard('edit');
+    openBoard();
+    const input = await screen.findByDisplayValue('Схема');
+    input.focus();
+    fireEvent.change(input, { target: { value: 'Черновик' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByDisplayValue('Схема')).toBe(input);
+    expect(document.activeElement).not.toBe(input);
+    expect(fetch).not.toHaveBeenCalledWith(
+      '/api/boards/b1',
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+
+    // Следующая правка сохраняется как обычно.
+    input.focus();
+    fireEvent.change(input, { target: { value: 'Архитектура' } });
+    fireEvent.blur(input);
+    expect(await screen.findByDisplayValue('Архитектура')).toBeTruthy();
+  });
+
   it('opens the board for viewing only to a viewer', async () => {
     serveBoard('view');
     openBoard();
@@ -288,14 +309,15 @@ describe('BoardPage discussions', () => {
     const fetch = serve('view', []);
     openAt(`/b/${BOARD}`);
     fireEvent.click(await screen.findByRole('button', { name: 'Комментарий' }));
-    fireEvent.pointerDown(screen.getByLabelText('Холст доски'), {
-      clientX: 120,
-      clientY: 80,
-      button: 0,
-    });
+    const canvas = screen.getByLabelText('Холст доски');
+    fireEvent.pointerDown(canvas, { clientX: 120, clientY: 80, button: 0 });
+    fireEvent.pointerUp(canvas, { clientX: 120, clientY: 80, button: 0 });
     expect(screen.getByText('В точке доски')).toBeTruthy();
+    // Поле сразу в фокусе: текст не уйдёт в сочетания клавиш доски.
+    const field = screen.getByRole('textbox', { name: 'Текст обсуждения' });
+    expect(document.activeElement).toBe(field);
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Текст обсуждения' }), {
+    fireEvent.change(field, {
       target: { value: 'Почему здесь?' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));

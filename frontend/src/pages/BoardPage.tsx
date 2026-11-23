@@ -431,7 +431,10 @@ function useBoardInfo(boardId: string, userId: string, online: boolean): BoardIn
   return { info, access, forbidden, update: setInfo };
 }
 
-/** Название доски. Переименовать её может тот, кто может её править. */
+/**
+ * Название доски. Переименовать её может тот, кто может её править: Enter и уход фокуса
+ * сохраняют, Esc возвращает прежнее название.
+ */
 function BoardName({
   boardId,
   saved,
@@ -445,6 +448,8 @@ function BoardName({
 }) {
   const [draft, setDraft] = useState(saved);
   const [shown, setShown] = useState(saved);
+  /** Ввод отменили клавишей Esc: уход фокуса после этого ничего не сохраняет. */
+  const cancelled = useRef(false);
   // Название пришло с сервера или изменилось: поле показывает его, а не старый черновик.
   if (saved !== shown) {
     setShown(saved);
@@ -453,7 +458,8 @@ function BoardName({
 
   const rename = () => {
     const name = draft.trim();
-    if (!name || name === saved) {
+    if (cancelled.current || !name || name === saved) {
+      cancelled.current = false;
       setDraft(saved);
       return;
     }
@@ -471,7 +477,8 @@ function BoardName({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={rename}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') cancelled.current = true;
+        if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur();
       }}
     />
   );

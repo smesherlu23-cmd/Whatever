@@ -16,11 +16,12 @@ function cursorFor(tool: Tool): string {
   return tool === 'text' ? 'text' : 'crosshair';
 }
 
-const TYPING_TARGETS = 'input, textarea, select, [contenteditable="true"]';
+/** Поля, в которых печатают, и меню: в меню Enter выбирает пункт, а не правит текст фигуры. */
+const OWN_KEYS = 'input, textarea, select, [contenteditable="true"], [role="menu"]';
 
-/** Клавиши и вставка достаются не доске, а открытому окну или полю, в котором печатают. */
+/** Клавиши и вставка достаются не доске, а открытому окну, полю или меню. */
 const notForBoard = (e: Event): boolean =>
-  modalDialogOpen() || (e.target instanceof Element && e.target.closest(TYPING_TARGETS) !== null);
+  modalDialogOpen() || (e.target instanceof Element && e.target.closest(OWN_KEYS) !== null);
 
 const hasFiles = (data: DataTransfer | null): data is DataTransfer =>
   data !== null && Array.from(data.types).includes('Files');
@@ -37,18 +38,34 @@ export interface BoardProps {
    * координатах. Без обработчика холст файлы не принимает.
    */
   onInsertFiles?: (files: File[], at: Point) => void;
+  /**
+   * Правый щелчок по холсту, точка в координатах холста. Редактор к этому моменту уже выделил
+   * то, что под указателем. Без обработчика браузер показывает своё меню.
+   */
+  onContextMenu?: (at: Point) => void;
 }
 
 /**
  * Холст доски. Передаёт события в редактор и перерисовывает кадр, только когда что-то
  * изменилось, причём сцену — только когда изменилась она сама.
  */
-export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: BoardProps) {
+export function Board({
+  editor,
+  presence,
+  images,
+  onOpenFile,
+  onInsertFiles,
+  onContextMenu,
+}: BoardProps) {
   const sceneRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const acceptsFiles = onInsertFiles !== undefined;
   const insertFiles = useEffectEvent((files: File[], at: Point) => {
     onInsertFiles?.(files, at);
+  });
+  const hasMenu = onContextMenu !== undefined;
+  const openMenu = useEffectEvent((at: Point) => {
+    onContextMenu?.(at);
   });
   const openFile = useEffectEvent((file: FileRef): boolean => {
     if (!onOpenFile) return false;
@@ -184,6 +201,13 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       editor.doubleClick(local(e));
     };
 
+    const onMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const at = local(e);
+      editor.contextMenu(at);
+      openMenu(at);
+    };
+
     const onDragOver = (e: DragEvent) => {
       if (!hasFiles(e.dataTransfer)) return;
       // Без preventDefault браузер не даст бросить файл и откроет его сам.
@@ -241,6 +265,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
     canvas.addEventListener('pointercancel', onPointerUp, { signal });
     canvas.addEventListener('pointerleave', onLeave, { signal });
     canvas.addEventListener('dblclick', onDoubleClick, { signal });
+    if (hasMenu) canvas.addEventListener('contextmenu', onMenu, { signal });
     if (acceptsFiles) {
       canvas.addEventListener('dragover', onDragOver, { signal });
       canvas.addEventListener('drop', onDrop, { signal });
@@ -259,7 +284,7 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       unsubscribeImages?.();
       unsubscribeTheme();
     };
-  }, [editor, presence, images, acceptsFiles]);
+  }, [editor, presence, images, acceptsFiles, hasMenu]);
 
   // Два холста друг над другом: сцена внизу, курсоры и выделения сверху. События получает
   // верхний.
