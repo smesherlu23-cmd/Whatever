@@ -19,9 +19,11 @@ x-logging: &logging
     max-size: 10m
     max-file: "5"
 
+# Образы: готовые из реестра (WHATEVER_IMAGE_PREFIX и WHATEVER_VERSION, см. docs/operations.md)
+# или собранные на сервере из этой папки, если их нет.
 x-backend: &backend
   build: ./backend
-  image: whatever-backend
+  image: ${WHATEVER_IMAGE_PREFIX:-whatever}-backend:${WHATEVER_VERSION:-dev}
   env_file: .env
   environment:
     <<: *database
@@ -101,7 +103,7 @@ services:
 
   frontend:
     build: ./frontend
-    image: whatever-frontend
+    image: ${WHATEVER_IMAGE_PREFIX:-whatever}-frontend:${WHATEVER_VERSION:-dev}
     ports:
       - "${WHATEVER_PORT:-8080}:8080"
     environment:

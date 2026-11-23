@@ -82,3 +82,12 @@ docs/              руководство пользователя и экспл
 ```
 
 Подробно о слоях и решениях — в [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Релиз
+
+1. Новая запись в начале [CHANGELOG.md](CHANGELOG.md) и та же версия в
+   `backend/app/__init__.py`, `backend/pyproject.toml` и `frontend/package.json`
+   (`tests/test_version.py` проверяет, что они совпадают).
+2. После слияния в main: `git tag v<версия> && git push origin v<версия>`.
+3. Workflow Release соберёт образы, опубликует их в GitHub Container Registry и создаст
+   страницу релиза с записью из CHANGELOG.md и архивом образов.

@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app import __version__
 from app.api import (
     admin,
     auth,
@@ -90,7 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await rooms.shutdown()
             await database.dispose()
 
-    app = FastAPI(title="Whatever API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Whatever API", version=__version__, lifespan=lifespan)
     app.state.settings = config
     app.state.metrics = collected
     app.add_middleware(RequestContext, metrics=collected)

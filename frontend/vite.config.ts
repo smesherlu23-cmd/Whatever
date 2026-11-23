@@ -1,8 +1,11 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { version } from './package.json';
 
 export default defineConfig({
   plugins: [react()],
+  // Версия из package.json попадает в сборку: её видно в меню пользователя.
+  define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
     // Сервер сверяет Origin с Host, поэтому прокси передаёт Host браузера без изменений,
     // как nginx в рабочей сборке.

@@ -98,3 +98,11 @@
   background: var(--bg-panel);
   color: var(--danger);
 }
+
+.version {
+  margin: 6px 0 0;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}

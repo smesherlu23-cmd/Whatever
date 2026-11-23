@@ -92,8 +92,36 @@ WHATEVER_TRUSTED_PROXY=172.16.0.0/12        # адрес прокси, как е
 
 ## Обновление
 
+Что изменилось в каждой версии и нужно ли что-то делать при обновлении — в
+[CHANGELOG.md](../CHANGELOG.md). Установленную версию показывают `/api/health`
+и меню пользователя в интерфейсе.
+
+**Готовые образы** (рекомендуется). К каждому релизу CI собирает образы и публикует их
+в GitHub Container Registry, так что сервер ничего не собирает и получает ровно те образы,
+что прошли проверки. Один раз добавьте в `.env`:
+
+```bash
+WHATEVER_IMAGE_PREFIX=ghcr.io/smesherlu23-cmd/whatever
+```
+
+и для каждого обновления укажите версию:
+
 ```bash
 make backup                                 # копия перед обновлением
+git fetch --tags && git checkout v0.2.0     # docker-compose.yml и скрипты этой версии
+sed -i 's/^WHATEVER_VERSION=.*/WHATEVER_VERSION=0.2.0/' .env   # или впишите строку
+docker compose pull
+docker compose up -d --no-build --wait --remove-orphans
+```
+
+**Сервер без доступа в интернет.** На странице релиза на GitHub лежит архив
+`whatever-<версия>-images.tar.gz` со всеми образами. Перенесите его на сервер и загрузите:
+`docker load -i whatever-0.2.0-images.tar.gz`, дальше — как выше, без `docker compose pull`.
+
+**Сборка на сервере** из исходников (без `WHATEVER_IMAGE_PREFIX` и `WHATEVER_VERSION`):
+
+```bash
+make backup
 git pull
 docker compose up -d --build --wait --remove-orphans
 ```
