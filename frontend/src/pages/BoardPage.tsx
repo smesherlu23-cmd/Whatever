@@ -35,6 +35,9 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 
 const NO_ACCESS = 'Нет доступа к доске. Попросите владельца поделиться ею.';
 
+/** Можно ли править доску с такими правами; null — права неизвестны, и править нельзя. */
+const canEditWith = (access: Access | null): boolean => access !== null && canEdit(access);
+
 /** Боковая панель доски: обсуждения или история версий. Открыта одна из них. */
 type Panel = 'discussion' | 'history';
 
@@ -50,7 +53,13 @@ export function BoardPage({
   threadId?: string | null;
 }) {
   const { user } = useAuth();
-  const [session] = useState(() => new BoardSession(boardId, user.name));
+  const [session] = useState(() => {
+    const created = new BoardSession(boardId, user.name);
+    // Пока права неизвестны, доска открыта для просмотра (или с запомненными правами) с первого
+    // кадра, а не после первого эффекта: иначе панель инструментов мелькала бы и у зрителя.
+    created.editor.setReadOnly(!canEditWith(rememberedAccess(user.id, boardId)));
+    return created;
+  });
   const [status, setStatus] = useState<ConnectionStatus>(session.status);
   const [sharing, setSharing] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -82,7 +91,7 @@ export function BoardPage({
   }, [session, user.name]);
 
   // Пока права неизвестны (без сети и без запомненных прав), доска открывается для просмотра.
-  const editable = board.access !== null && canEdit(board.access);
+  const editable = canEditWith(board.access);
   const manages = board.access !== null && canManage(board.access);
   useEffect(() => {
     session.editor.setReadOnly(!editable);

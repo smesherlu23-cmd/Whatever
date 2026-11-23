@@ -83,33 +83,44 @@ export async function serverElements(page: Page, boardId: string): Promise<numbe
 }
 
 /**
+ * Яркость, темнее которой точка считается краской фигуры. Фон светлой темы ярче 240, точки
+ * сетки — около 230. Линия толщиной в пиксель, попавшая ровно на границу пикселей,
+ * сглаживается в две полосы серого с яркостью около 110: прежний порог 100 её не видел,
+ * и тест зависел от того, как фигура легла на пиксели.
+ */
+const INK_LUMINANCE = 180;
+
+/**
  * Сколько тёмных точек нарисовано в области box слоя сцены (без box — на всей сцене): так тест видит фигуру,
  * не завися от того, как именно она нарисована. Фон и сетка светлые, ещё не нарисованный
  * холст прозрачен.
  */
 export async function ink(page: Page, box?: Box): Promise<number> {
-  return page.evaluate((area) => {
-    const scene = document.querySelector<HTMLCanvasElement>('canvas[aria-hidden="true"]');
-    const ctx = scene?.getContext('2d');
-    if (!scene || !ctx) return 0;
-    const scale = scene.width / scene.clientWidth;
-    const { x, y, w, h } = area ?? { x: 0, y: 0, w: scene.clientWidth, h: scene.clientHeight };
-    const { data } = ctx.getImageData(
-      Math.round(x * scale),
-      Math.round(y * scale),
-      Math.round(w * scale),
-      Math.round(h * scale),
-    );
-    let dark = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      // Прозрачная точка — кадр ещё не нарисован, а не тёмная краска.
-      if ((data[i + 3] ?? 0) < 128) continue;
-      const luminance =
-        0.299 * (data[i] ?? 255) + 0.587 * (data[i + 1] ?? 255) + 0.114 * (data[i + 2] ?? 255);
-      if (luminance < 100) dark += 1;
-    }
-    return dark;
-  }, box);
+  return page.evaluate(
+    ({ area, threshold }) => {
+      const scene = document.querySelector<HTMLCanvasElement>('canvas[aria-hidden="true"]');
+      const ctx = scene?.getContext('2d');
+      if (!scene || !ctx) return 0;
+      const scale = scene.width / scene.clientWidth;
+      const { x, y, w, h } = area ?? { x: 0, y: 0, w: scene.clientWidth, h: scene.clientHeight };
+      const { data } = ctx.getImageData(
+        Math.round(x * scale),
+        Math.round(y * scale),
+        Math.round(w * scale),
+        Math.round(h * scale),
+      );
+      let dark = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        // Прозрачная точка — кадр ещё не нарисован, а не тёмная краска.
+        if ((data[i + 3] ?? 0) < 128) continue;
+        const luminance =
+          0.299 * (data[i] ?? 255) + 0.587 * (data[i + 1] ?? 255) + 0.114 * (data[i + 2] ?? 255);
+        if (luminance < threshold) dark += 1;
+      }
+      return dark;
+    },
+    { area: box, threshold: INK_LUMINANCE },
+  );
 }
 
 function originOf(page: Page): string {
