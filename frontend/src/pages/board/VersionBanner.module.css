@@ -2,7 +2,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: calc(100vw - 32px);
+  /* На узком холсте плашка сжимается за счёт текста, кнопки остаются целыми. */
+  min-width: 0;
   padding: 6px 6px 6px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -17,17 +18,21 @@
   margin: 0 8px 0 0;
 }
 
+.label,
+.version {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .label {
   color: var(--text-muted);
   font-size: 12px;
 }
 
 .version {
-  overflow: hidden;
-  max-width: 320px;
+  max-width: 360px;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .banner button {

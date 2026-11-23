@@ -42,6 +42,13 @@
   color: var(--text);
 }
 
+/* Включённый переключатель, например кнопка открытой боковой панели. */
+.secondary[aria-pressed='true'] {
+  border-color: var(--text-muted);
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .primary:disabled,
 .secondary:disabled,
 .danger:disabled,

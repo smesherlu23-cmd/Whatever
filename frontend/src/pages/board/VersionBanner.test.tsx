@@ -1,17 +1,18 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { BoardVersion } from '../../api';
 import { version } from '../../testing/versions';
 import { formatMoment } from '../../ui/time';
 import { VersionBanner } from './VersionBanner';
 
 const NAMED = version('v1', new Date().toISOString(), { name: 'Перед релизом' });
 
-function setup(fields: { canRestore?: boolean; restoring?: boolean } = {}) {
+function setup(fields: { version?: BoardVersion; canRestore?: boolean; restoring?: boolean } = {}) {
   const onRestore = vi.fn();
   const onBack = vi.fn();
   render(
     <VersionBanner
-      version={NAMED}
+      version={fields.version ?? NAMED}
       restoring={fields.restoring ?? false}
       canRestore={fields.canRestore ?? true}
       onRestore={onRestore}
@@ -29,7 +30,10 @@ describe('VersionBanner', () => {
   it('names the version and restores it only after the user agrees', () => {
     const { onRestore, onBack } = setup();
     const banner = screen.getByRole('region', { name: 'Просмотр версии' });
-    expect(banner.textContent).toContain(`«Перед релизом», ${formatMoment(NAMED.created_at)}`);
+    expect(
+      within(banner).getByText(`Просмотр версии · ${formatMoment(NAMED.created_at)}`),
+    ).toBeTruthy();
+    expect(within(banner).getByText('Перед релизом')).toBeTruthy();
 
     const confirm = vi
       .spyOn(window, 'confirm')
@@ -46,8 +50,10 @@ describe('VersionBanner', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it('offers no restore on a board that cannot be changed', () => {
-    setup({ canRestore: false });
+  it('names an automatic version by its time and offers no restore on a read-only board', () => {
+    setup({ version: { ...NAMED, name: null }, canRestore: false });
+    expect(screen.getByText('Просмотр версии')).toBeTruthy();
+    expect(screen.getByText(formatMoment(NAMED.created_at))).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Восстановить' })).toBeNull();
   });
 

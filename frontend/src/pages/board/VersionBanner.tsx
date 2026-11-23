@@ -27,9 +27,11 @@ export function VersionBanner({
   return (
     <section className={styles.banner} aria-label="Просмотр версии">
       <p className={styles.text}>
-        <span className={styles.label}>Просмотр версии</span>
-        <span className={styles.version}>
-          {version.name === null ? when : `«${version.name}», ${when}`}
+        <span className={styles.label}>
+          {version.name === null ? 'Просмотр версии' : `Просмотр версии · ${when}`}
+        </span>
+        <span className={styles.version} title={version.name ?? when}>
+          {version.name ?? when}
         </span>
       </p>
       {canRestore && (

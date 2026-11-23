@@ -28,11 +28,23 @@
   overflow: hidden;
 }
 
+/*
+ * Полоса во всю ширину холста, панель в ней по центру. Сама полоса нажатий не ловит: под ней
+ * холст. По центру панель ставят поля auto, а не justify-content: если панель шире полосы,
+ * поля обнуляются, и она начинается от левого края полосы, а не уходит за него.
+ */
 .toolbar {
   position: absolute;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 16px;
+  left: 16px;
+  display: flex;
+  pointer-events: none;
+}
+
+.toolbar > * {
+  margin-inline: auto;
+  pointer-events: auto;
 }
 
 /* Панель зрителя: менять доску нельзя, а обсуждать можно. */
