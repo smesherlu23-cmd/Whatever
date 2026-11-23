@@ -7,7 +7,7 @@ SHELL := bash
 
 COMPOSE_DEV := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
-.PHONY: help install db migrate admin backend frontend format check check-backend check-frontend up down logs
+.PHONY: help install db migrate admin backend frontend format check check-backend check-frontend up down logs backup restore
 
 help: ## показать список команд
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  \033[1m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -55,3 +55,9 @@ down: ## остановить приложение в Docker (данные ба�
 
 logs: ## журналы приложения в Docker
 	docker compose logs -f --tail=100
+
+backup: ## резервная копия базы и файлов сейчас, в папку backups/
+	docker compose exec -T backup /ops/backup.sh once
+
+restore: ## восстановить из копии: make restore BACKUP=whatever-<дата>
+	ops/restore.sh $(or $(BACKUP),$(error Укажите копию: make restore BACKUP=whatever-<дата>))

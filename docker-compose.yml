@@ -74,6 +74,31 @@ services:
     # Время на штатную остановку: бэкенд дописывает в базу изменения открытых досок.
     stop_grace_period: 30s
 
+  # Ежедневная резервная копия базы и файлов досок в папку WHATEVER_BACKUP_DIR на сервере
+  # (см. ops/backup.sh и docs/operations.md). Копия сейчас: make backup.
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-whatever}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в .env (см. .env.example)}
+      PGDATABASE: ${POSTGRES_DB:-whatever}
+      BACKUP_HOUR: ${WHATEVER_BACKUP_HOUR:-0}
+      BACKUP_KEEP_DAYS: ${WHATEVER_BACKUP_KEEP_DAYS:-14}
+    # От root: папку копий на сервере создаёт Docker, и она принадлежит root.
+    entrypoint: ["/ops/backup.sh"]
+    command: ["schedule"]
+    volumes:
+      # Папка, а не файл: файл, подключённый отдельно, после git pull остался бы старым.
+      - ./ops:/ops:ro
+      - files-data:/files:ro
+      - ${WHATEVER_BACKUP_DIR:-./backups}:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
   frontend:
     build: ./frontend
     image: whatever-frontend

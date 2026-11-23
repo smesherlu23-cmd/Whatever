@@ -11,6 +11,7 @@
 | `backend` | Python 3.12, uvicorn | API и синхронизация досок, один процесс; картинки и вложения досок — том `files-data` |
 | `migrate` | тот же, что `backend` | применяет миграции базы и завершается; бэкенд стартует после него |
 | `postgres` | PostgreSQL 16 | данные; том `postgres-data` |
+| `backup` | PostgreSQL 16 | раз в сутки копирует базу и файлы досок в папку `backups/` |
 
 У каждого долгоживущего сервиса есть healthcheck: `docker compose ps` показывает `healthy`,
 когда сервис готов. nginx запускается только после того, как бэкенд стал здоровым,
@@ -92,7 +93,7 @@ WHATEVER_TRUSTED_PROXY=172.16.0.0/12        # адрес прокси, как е
 ## Обновление
 
 ```bash
-docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > before-update.dump
+make backup                                 # копия перед обновлением
 git pull
 docker compose up -d --build --wait --remove-orphans
 ```
@@ -114,32 +115,42 @@ docker compose up -d --build --wait --remove-orphans
 ## Резервное копирование
 
 Данные лежат в двух местах: в базе (доски, учётные записи, права) и в томе `files-data`
-(картинки и вложения досок). Копируйте оба, сначала базу, потом файлы: тогда в копии
-будут все файлы, о которых знает база.
+(картинки и вложения досок). Сервис `backup` каждый день копирует оба в папку `backups/`
+рядом с `docker-compose.yml` и удаляет копии старше 14 дней. Сначала копируется база, потом
+файлы: в копии есть все файлы, о которых знает база. Копия делается на работающем
+приложении, останавливать его не нужно.
+
+Каждая копия — два файла с общим именем:
+
+```
+backups/whatever-2026-11-23T0000.dump            база (pg_dump -Fc)
+backups/whatever-2026-11-23T0000.files.tar.gz    файлы досок
+```
+
+Файлы копий доступны только root: в них хеши паролей и все доски. Папку, час (по UTC)
+и срок хранения задают `WHATEVER_BACKUP_DIR`, `WHATEVER_BACKUP_HOUR` и
+`WHATEVER_BACKUP_KEEP_DAYS` в `.env`. Результат каждой копии и ошибки —
+в `docker compose logs backup`.
+
+Копия вне расписания, например перед обновлением:
 
 ```bash
-docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > whatever-$(date +%F).dump
-docker compose exec -T backend tar -C /var/lib/whatever/files -cz . > whatever-files-$(date +%F).tar.gz
+make backup
 ```
 
-Копию можно делать на работающем приложении. Для ежедневных копий — строки cron
-(`crontab -e`), которые хранят копии 14 дней:
-
-```cron
-0 3 * * * cd /opt/whatever && docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/whatever-$(date +\%F).dump && docker compose exec -T backend tar -C /var/lib/whatever/files -cz . > backups/whatever-files-$(date +\%F).tar.gz
-30 3 * * * cd /opt/whatever && find backups -name 'whatever-*' -mtime +14 -delete
-```
-
-Храните копии не только на этом сервере.
+Храните копии не только на этом сервере: например, забирайте папку `backups/` на другой
+сервер через `rsync` по cron.
 
 ### Восстановление
 
 ```bash
-docker compose stop backend                 # чтобы никто не писал в базу
-docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < whatever-2026-11-22.dump
-docker compose run --rm --no-deps -T backend tar -C /var/lib/whatever/files -xz < whatever-files-2026-11-22.tar.gz
-docker compose start backend
+make restore BACKUP=whatever-2026-11-23T0000
 ```
+
+Команда останавливает бэкенд, заменяет базу и файлы досок содержимым копии (файлы, которых
+в копии нет, удаляются) и запускает бэкенд снова. Копию она ищет в папке копий; копию
+с другого сервера сначала положите туда. CI на каждом изменении делает копию,
+удаляет все данные и восстанавливает их из копии, так что этот путь проверен.
 
 У участников, которые открывали доски после создания копии, в браузере остались более
 новые версии этих досок. Когда они откроют доску снова, эти изменения вернутся на сервер:
