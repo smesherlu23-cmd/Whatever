@@ -70,8 +70,19 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
       editor.setViewport({ width: canvas.clientWidth, height: canvas.clientHeight });
     };
 
+    // Положения указателя копятся до ближайшего кадра и отдаются редактору разом.
+    let moves: Point[] = [];
+    let moveShift = false;
+    const flushMoves = () => {
+      if (moves.length === 0) return;
+      const batch = moves;
+      moves = [];
+      editor.pointerMoves(batch, { shift: moveShift });
+    };
+
     const render = () => {
       frame = requestAnimationFrame(render);
+      flushMoves();
       if (!dirty) return;
       dirty = false;
       canvas.style.cursor = editor.spaceHeld ? 'grab' : cursorFor(editor.tool);
@@ -98,17 +109,20 @@ export function Board({ editor, presence, images, onOpenFile, onInsertFiles }: B
     };
     const onPointerDown = (e: PointerEvent) => {
       canvas.setPointerCapture(e.pointerId);
+      // Движения до нажатия относятся к прошлому жесту (или к наведению), а не к новому.
+      flushMoves();
       editor.pointerDown(local(e), { button: e.button, shift: e.shiftKey });
     };
     const onPointerMove = (e: PointerEvent) => {
       // Берём все промежуточные точки, которые браузер склеил в одно событие.
       // Safari до версии 18 не умеет getCoalescedEvents.
       const coalesced = 'getCoalescedEvents' in e ? e.getCoalescedEvents() : [];
-      for (const ev of coalesced.length > 0 ? coalesced : [e]) {
-        editor.pointerMove(local(ev), { shift: e.shiftKey });
-      }
+      for (const ev of coalesced.length > 0 ? coalesced : [e]) moves.push(local(ev));
+      moveShift = e.shiftKey;
     };
     const onPointerUp = () => {
+      // Жест заканчивается там, куда указатель успел дойти, даже если кадр ещё не наступил.
+      flushMoves();
       editor.pointerUp();
     };
     const onHover = (e: PointerEvent) => {
