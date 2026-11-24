@@ -374,6 +374,27 @@ describe('CommentsPanel', () => {
     expect(screen.queryByRole('region', { name: 'Новое обсуждение' })).toBeNull();
     expect(screen.getByRole('radio', { name: /^Открытые/ })).toBeTruthy();
   });
+  it('focuses the field again when the pin is placed somewhere else', () => {
+    const store = new CommentStore('b1');
+    const panel = (draft: DraftPin) => (
+      <CommentsPanel
+        store={store}
+        comments={{ threads: [], status: 'ready' }}
+        editor={new Editor()}
+        viewer={{ id: ANNA.id, moderates: false }}
+        selectedId={null}
+        draft={draft}
+        onSelect={vi.fn()}
+        onDraftDone={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    const { rerender } = render(panel({ page: DEFAULT_PAGE, x: 0, y: 0, element: null }));
+    // Щелчок по холсту увёл фокус, и метку поставили в другом месте.
+    field('Текст обсуждения').blur();
+    rerender(panel({ page: DEFAULT_PAGE, x: 300, y: 200, element: null }));
+    expect(document.activeElement).toBe(field('Текст обсуждения'));
+  });
 });
 
 describe('Mentions in a comment', () => {

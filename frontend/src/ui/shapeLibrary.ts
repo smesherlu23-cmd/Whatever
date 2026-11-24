@@ -21,7 +21,11 @@ const item = (kind: ToolKind, label: string, preset?: ShapePreset, id: string = 
   ...(preset && { preset }),
 });
 
-/** Наборы фигур на панели «Фигуры». Одна фигура может входить в несколько наборов. */
+/**
+ * Наборы фигур на панели «Фигуры». Одна фигура может входить в несколько наборов.
+ * Остальные виды фигур каталога (UML, ER, BPMN, контейнеры) на панель не выводятся, но доски
+ * и шаблоны, где они уже есть, показываются как прежде.
+ */
 export const SHAPE_LIBRARY: readonly LibraryGroup[] = [
   {
     title: 'Основные',
@@ -60,42 +64,6 @@ export const SHAPE_LIBRARY: readonly LibraryGroup[] = [
       item('queue', 'Очередь'),
       item('cloud', 'Облако'),
       item('rounded', 'Контейнер C4', { text: 'Сервис\n[Технология]' }, 'c4-container'),
-    ],
-  },
-  {
-    title: 'UML',
-    items: [
-      item('class', 'Класс', { text: 'Класс\n--\n+ поле: Тип\n--\n+ метод(): Тип' }),
-      item('class', 'Интерфейс', { text: '«интерфейс»\nИмя\n--\n+ метод(): Тип' }, 'interface'),
-      item('component', 'Компонент'),
-      item('package', 'Пакет'),
-      item('actor', 'Актёр'),
-      item('lifeline', 'Линия жизни', { text: 'Объект' }),
-      item('note', 'Комментарий', undefined, 'uml-note'),
-    ],
-  },
-  {
-    title: 'ER',
-    items: [
-      item('entity', 'Сущность', { text: 'Сущность\n--\nid: uuid PK\nназвание: text' }),
-      item('note', 'Примечание', undefined, 'er-note'),
-    ],
-  },
-  {
-    title: 'BPMN',
-    items: [
-      item('startEvent', 'Начальное событие'),
-      item('rounded', 'Задача', undefined, 'task'),
-      item('gateway', 'Шлюз'),
-      item('endEvent', 'Конечное событие'),
-    ],
-  },
-  {
-    title: 'Контейнеры',
-    items: [
-      item('frame', 'Рамка', { text: 'Рамка' }),
-      item('group', 'Граница системы', { text: 'Система' }),
-      item('lane', 'Дорожка', { text: 'Участник' }),
     ],
   },
 ];

@@ -5,6 +5,8 @@ import type { Page } from '../../model/types';
 import controls from '../../ui/controls.module.css';
 import { Dialog } from '../../ui/Dialog';
 import dialogStyles from '../../ui/Dialog.module.css';
+import { MenuItem, moveMenuFocus } from '../../ui/Menu';
+import menuStyles from '../../ui/Menu.module.css';
 import { useDismiss } from '../../ui/useDismiss';
 import styles from './PageTabs.module.css';
 import { usePages } from './usePages';
@@ -147,7 +149,14 @@ export function PageTabs({
         )}
         {menuOpen && current && (
           // Щелчок по любому пункту закрывает меню.
-          <div className={styles.menu} role="menu" onClick={() => setMenuOpen(false)}>
+          <div
+            className={`${menuStyles.menu} ${styles.menu}`}
+            role="menu"
+            onClick={() => setMenuOpen(false)}
+            onKeyDown={(e) => {
+              if (moveMenuFocus(e.currentTarget, e.key)) e.preventDefault();
+            }}
+          >
             <MenuItem onClick={() => setRenaming(current.id)}>Переименовать</MenuItem>
             <MenuItem onClick={() => duplicatePage(editor, current.id)}>Дублировать</MenuItem>
             <MenuItem
@@ -195,31 +204,6 @@ export function PageTabs({
         </Dialog>
       )}
     </>
-  );
-}
-
-function MenuItem({
-  children,
-  onClick,
-  disabled = false,
-  danger = false,
-}: {
-  children: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      className={styles.menuItem}
-      data-danger={danger || undefined}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </button>
   );
 }
 

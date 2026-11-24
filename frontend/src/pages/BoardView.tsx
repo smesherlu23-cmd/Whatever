@@ -9,10 +9,12 @@ import type { Editor } from '../editor/Editor';
 import { TextEditor } from '../editor/TextEditor';
 import { useEditorState } from '../editor/useEditorState';
 import type { BoardFiles } from '../files/boardFiles';
+import type { Point } from '../model/types';
 import { ShapePanel } from '../ui/ShapePanel';
 import { COMMENT_TOOL, IconButton, Toolbar } from '../ui/Toolbar';
 import { useStoredFlag } from '../ui/useStoredFlag';
 import { ZoomControls } from '../ui/ZoomControls';
+import { BoardMenu } from './board/BoardMenu';
 import { FollowNotice } from './board/FollowNotice';
 import { PageTabs } from './board/PageTabs';
 import { useFileInsert } from './board/useFileInsert';
@@ -49,6 +51,8 @@ export function BoardView({
 }) {
   const state = useEditorState(editor);
   const [shapesOpen, setShapesOpen] = useState(false);
+  /** Где открыто контекстное меню холста; null — закрыто. */
+  const [menuAt, setMenuAt] = useState<Point | null>(null);
   const { insert, uploading, error, dismissError } = useFileInsert(editor, files);
   const picker = useRef<HTMLInputElement>(null);
   const [minimap, setMinimap] = useStoredFlag(storageKeys.minimap, true);
@@ -64,6 +68,7 @@ export function BoardView({
             images={files.images}
             onOpenFile={(file) => files.open(file)}
             onInsertFiles={state.readOnly ? undefined : (chosen, at) => void insert(chosen, at)}
+            onContextMenu={setMenuAt}
           />
           {overlay}
           {leader && (
@@ -142,6 +147,15 @@ export function BoardView({
               tool={state.tool}
               onPick={(tool, preset) => editor.setTool(tool, preset)}
               onClose={() => setShapesOpen(false)}
+            />
+          )}
+          {menuAt && (
+            <BoardMenu
+              editor={editor}
+              at={menuAt}
+              onClose={() => {
+                setMenuAt(null);
+              }}
             />
           )}
           <PageTabs editor={editor} pageId={state.pageId} readOnly={state.readOnly} />

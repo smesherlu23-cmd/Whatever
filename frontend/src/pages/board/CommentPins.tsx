@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { CommentThread, ElementAnchor } from '../../api';
 import { worldToScreen } from '../../canvas/camera';
 import { pinPoint } from '../../comments/anchor';
@@ -93,11 +93,32 @@ export function CommentPins({
     [editor, threads, selectedId, draft],
   );
   const pins = useSyncExternalStore(pinLayout.subscribe, pinLayout.read);
+  const layer = useRef<HTMLDivElement>(null);
+
+  // Колесо над меткой двигает и масштабирует доску, как над холстом: метка лежит поверх
+  // холста и иначе забирала бы прокрутку себе, а Ctrl+колесо масштабировало бы страницу.
+  // Слушатель не пассивный, иначе масштаб страницы браузера не отменить.
+  useEffect(() => {
+    const element = layer.current;
+    if (!element) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = element.getBoundingClientRect();
+      const at = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      editor.wheel(at, e.deltaX, e.deltaY, e.ctrlKey || e.metaKey);
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      element.removeEventListener('wheel', onWheel);
+    };
+  }, [editor]);
 
   return (
-    <div className={styles.layer}>
+    <div ref={layer} className={styles.layer}>
       {pins.map(({ id, thread, at }) => {
-        const style = { transform: `translate(${at.x}px, ${at.y}px)` };
+        // Сдвиг задаётся свойством translate, а не transform: увеличение при наведении (scale)
+        // тогда растягивает метку на месте, а не уносит её из-под указателя.
+        const style = { translate: `${at.x}px ${at.y}px` };
         if (!thread) {
           return (
             <span key={id} className={styles.pin} data-draft="" style={style} aria-hidden="true">

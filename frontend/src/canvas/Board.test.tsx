@@ -47,6 +47,47 @@ describe('Board', () => {
     expect(editor.tool).toBe('rectangle');
   });
 
+  it('leaves keys to an open menu: Enter picks an item there', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    render(
+      <>
+        <Board editor={editor} />
+        <div role="menu">
+          <button type="button" role="menuitem">
+            Удалить
+          </button>
+        </div>
+      </>,
+    );
+    fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'o', code: 'KeyO' });
+    expect(editor.tool).toBe('rectangle');
+  });
+
+  it('opens its own context menu on right click, with what is under the pointer selected', () => {
+    const editor = new Editor();
+    editor.setTool('rectangle');
+    const onContextMenu = vi.fn<(at: Point) => void>();
+    const { rerender } = render(<Board editor={editor} onContextMenu={onContextMenu} />);
+    const canvas = screen.getByLabelText('Холст доски');
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10, button: 0 });
+    fireEvent.pointerMove(canvas, { clientX: 110, clientY: 110 });
+    fireEvent.pointerUp(canvas);
+    editor.select([]);
+
+    const menu = createEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+    fireEvent(canvas, menu);
+    expect(menu.defaultPrevented).toBe(true);
+    expect(onContextMenu).toHaveBeenCalledExactlyOnceWith({ x: 50, y: 60 });
+    expect([...editor.selection]).toEqual([defined(shapes(editor.doc)[0]).id]);
+
+    // Без обработчика остаётся меню браузера.
+    rerender(<Board editor={editor} />);
+    const native = createEvent.contextMenu(canvas, { clientX: 50, clientY: 60 });
+    fireEvent(canvas, native);
+    expect(native.defaultPrevented).toBe(false);
+  });
+
   it('leaves keys and pasted files to an open dialog', () => {
     const editor = new Editor();
     editor.setTool('rectangle');
